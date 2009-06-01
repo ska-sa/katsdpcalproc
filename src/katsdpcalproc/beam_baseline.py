@@ -100,6 +100,15 @@ class BeamBaselineComboFit(ScatterFit):
                                  [self.beam_height], poly_x, poly_y))
         # Internal non-linear least squares fitter
         self._interp = NonLinearLeastSquaresFit(_beam_plus_baseline, params, method='leastsq')
+        # bounds = [(None, None), (None, None),
+        #           (1.0 / fwhm_to_sigma(1.5 * self.beam_width[0]) ** 2.0,
+        #            1.0 / fwhm_to_sigma(0.6 * self.beam_width[0]) ** 2.0),
+        #           (1.0 / fwhm_to_sigma(1.5 * self.beam_width[1]) ** 2.0,
+        #            1.0 / fwhm_to_sigma(0.6 * self.beam_width[1]) ** 2.0), (0.0, None)] + \
+        #          [(None, None)] * (len(self.poly_x) - 1) + [(0.0, None)] + \
+        #          [(None, None)] * (len(self.poly_y) - 1) + [(0.0, None)]
+        # self._interp = NonLinearLeastSquaresFit(_beam_plus_baseline, params, method='fmin_l_bfgs_b',
+        #                                         approx_grad=True, bounds=bounds, iprint=1)
     
     def is_valid(self, expected_width):
         """Check whether beam parameters are valid and within acceptable bounds.
