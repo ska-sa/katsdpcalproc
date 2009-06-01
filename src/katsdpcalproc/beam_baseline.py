@@ -82,7 +82,7 @@ class BeamBaselineComboFit(ScatterFit):
     """
     def __init__(self, beam_center, beam_width, beam_height, poly_x, poly_y):
         ScatterFit.__init__(self)
-        def beam_plus_baseline(p, xy):
+        def _beam_plus_baseline(p, xy):
             # Calculate 2-dimensional Gaussian curve with diagonal covariance matrix, in vectorised form
             xy_min_mu = xy - p[np.newaxis, :2]
             beam = p[4] * np.exp(-0.5 * np.dot(xy_min_mu * xy_min_mu, p[2:4]))
@@ -99,7 +99,7 @@ class BeamBaselineComboFit(ScatterFit):
         params = np.concatenate((self.beam_center, 1.0 / fwhm_to_sigma(self.beam_width) ** 2.0,
                                  [self.beam_height], poly_x, poly_y))
         # Internal non-linear least squares fitter
-        self._interp = NonLinearLeastSquaresFit(beam_plus_baseline, params, method='leastsq')
+        self._interp = NonLinearLeastSquaresFit(_beam_plus_baseline, params, method='leastsq')
     
     def is_valid(self, expected_width):
         """Check whether beam parameters are valid and within acceptable bounds.
@@ -129,9 +129,9 @@ class BeamBaselineComboFit(ScatterFit):
         Parameters
         ----------
         x : array, shape (N, 2)
-            Sequence of 2-dimensional input values as a numpy array
+            Sequence of 2-dimensional target coordinates
         y : array, shape (N,)
-            Sequence of 1-D output values as a numpy array
+            Sequence of corresponding total power values to fit
         
         """
         self._interp.fit(x, y)
@@ -148,12 +148,32 @@ class BeamBaselineComboFit(ScatterFit):
         Parameters
         ----------
         x : array, shape (M, 2)
-            Input to function as a numpy array
+            Sequence of 2-dimensional target coordinates
+        
+        Returns
+        -------
         y : array, shape (M,)
-            Output of function as a numpy array
+            Sequence of total power values representing fitted beam plus baseline
         
         """
         return self._interp(x)
+    
+    def baseline(self, x):
+        """Evaluate baseline only at given target coordinates.
+        
+        Parameters
+        ----------
+        x : array, shape (M, 2)
+            Sequence of 2-dimensional target coordinates
+        
+        Returns
+        -------
+        y : array, shape (M,)
+            Sequence of total power values representing fitted baseline only
+        
+        """
+        xy_min_mu = x - self.beam_center
+        return np.polyval(self.poly_x, xy_min_mu[:, 0]) * np.polyval(self.poly_y,  xy_min_mu[:, 1])
 
 #--------------------------------------------------------------------------------------------------
 #--- FUNCTION :  fit_beam_and_baseline
