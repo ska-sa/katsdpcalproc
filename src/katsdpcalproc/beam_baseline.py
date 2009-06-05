@@ -3,7 +3,7 @@
 import numpy as np
 import scipy.special as special
 
-from .fitting import ScatterFit, NonLinearLeastSquaresFit
+from .fitting import ScatterFit, Polynomial2DFit, GaussianFit
 from .stats import remove_spikes
 
 def jinc(x):
@@ -53,87 +53,39 @@ def sigma_to_fwhm(sigma):
     return 2.0 * np.sqrt(2.0 * np.log(2.0)) * sigma
     
 #--------------------------------------------------------------------------------------------------
-#--- CLASS :  BeamBaselineComboFit
+#--- CLASS :  BeamPatternFit
 #--------------------------------------------------------------------------------------------------
 
-class BeamBaselineComboFit(ScatterFit):
-    """Fit Gaussian beam plus polynomial baseline to two-dimensional data.
+class BeamPatternFit(ScatterFit):
+    """Fit analytic beam pattern to total power data defined on 2-D plane.
     
     This fits a two-dimensional Gaussian curve (with diagonal covariance matrix)
-    plus a low-order polynomial of form ``f(x) * g(y)`` to (x, y) data. The
-    Gaussian bump represents an antenna beam pattern convolved with a point
-    source, while the 2-D polynomial represents the baseline power level. The
-    underlying optimiser is a modified Levenberg-Marquardt algorithm
-    (:func:`scipy.optimize.leastsq`).
+    to total power data as a function of 2-D coordinates. The Gaussian bump
+    represents an antenna beam pattern convolved with a point source.
     
     Parameters
     ----------
-    beam_center : real array-like, shape (2,)
+    center : real array-like, shape (2,)
         Initial guess of 2-element Gaussian mean vector
-    beam_width : real array-like, shape (2,)
+    width : real array-like, shape (2,)
         Initial guess of 2-element variance vector, expressed as FWHM widths
-    beam_height : float
+    height : float
         Initial guess of height of Gaussian curve
-    poly_x : real array_like, shape (M,)
-        Initial guess for polynomial f(x) (highest-order coefficient first)
-    poly_y : real array_like, shape (N,)
-        Initial guess for polynomial g(y) (highest-order coefficient first)
     
     """
-    def __init__(self, beam_center, beam_width, beam_height, poly_x, poly_y):
+    def __init__(self, center, width, height):
         ScatterFit.__init__(self)
-        def _beam_plus_baseline(p, xy):
-            # Calculate 2-dimensional Gaussian curve with diagonal covariance matrix, in vectorised form
-            xy_min_mu = xy - p[np.newaxis, :2]
-            beam = p[4] * np.exp(-0.5 * np.dot(xy_min_mu * xy_min_mu, p[2:4]))
-#            beam = p[4] * jinc(np.sqrt(np.dot(xy_min_mu * xy_min_mu, p[2:4]))) ** 2
-            baseline = np.polyval(p[5:5 + len(poly_x)], xy_min_mu[:, 0]) * \
-                       np.polyval(p[5 + len(poly_x):],  xy_min_mu[:, 1])
-            return beam + baseline
-        self.beam_center = np.atleast_1d(np.asarray(beam_center))
-        self.beam_width = np.atleast_1d(np.asarray(beam_width))
-        self.beam_height = beam_height
-        self.poly_x = poly_x
-        self.poly_y = poly_y
-        # Create parameter vector for optimisation
-        params = np.concatenate((self.beam_center, 1.0 / fwhm_to_sigma(self.beam_width) ** 2.0,
-                                 [self.beam_height], poly_x, poly_y))
-        # Internal non-linear least squares fitter
-        self._interp = NonLinearLeastSquaresFit(_beam_plus_baseline, params, method='leastsq')
-        # bounds = [(None, None), (None, None),
-        #           (1.0 / fwhm_to_sigma(1.5 * self.beam_width[0]) ** 2.0,
-        #            1.0 / fwhm_to_sigma(0.6 * self.beam_width[0]) ** 2.0),
-        #           (1.0 / fwhm_to_sigma(1.5 * self.beam_width[1]) ** 2.0,
-        #            1.0 / fwhm_to_sigma(0.6 * self.beam_width[1]) ** 2.0), (0.0, None)] + \
-        #          [(None, None)] * (len(self.poly_x) - 1) + [(0.0, None)] + \
-        #          [(None, None)] * (len(self.poly_y) - 1) + [(0.0, None)]
-        # self._interp = NonLinearLeastSquaresFit(_beam_plus_baseline, params, method='fmin_l_bfgs_b',
-        #                                         approx_grad=True, bounds=bounds, iprint=1)
-    
-    def is_valid(self, expected_width):
-        """Check whether beam parameters are valid and within acceptable bounds.
-        
-        Parameters
-        ----------
-        expected_width : float
-            Expected FWHM beamwidth
-        
-        Returns
-        -------
-        is_valid : bool
-            True if beam parameters check out OK.
-        
-        """
-        return not np.any(np.isnan(self.beam_center)) and (self.beam_height > 0.0) and \
-               (np.max(self.beam_width) < 3.0 * expected_width) and \
-               (np.min(self.beam_width) > expected_width / 1.4)
+        width = np.atleast_1d(np.asarray(width))
+        self._interp = GaussianFit(center, fwhm_to_sigma(width) ** 2.0, height)
+        self.center = self._interp.mean
+        self.width = sigma_to_fwhm(np.sqrt(self._interp.var))
+        self.height = self._interp.height
     
     def fit(self, x, y):
-        """Fit a polynomial baseline plus Gaussian bump to data.
+        """Fit a beam pattern to data.
         
-        The mean, variance and height of the Gaussian bump and the polynomial
-        baselines can be obtained from the corresponding member variables after
-        this is run.
+        The center, width and height of the fitted beam pattern can be obtained
+        from the corresponding member variables after this is run.
         
         Parameters
         ----------
@@ -144,12 +96,9 @@ class BeamBaselineComboFit(ScatterFit):
         
         """
         self._interp.fit(x, y)
-        # Recreate Gaussian and polynomial parameters
-        self.beam_center = self._interp.params[:2]
-        self.beam_width = sigma_to_fwhm(np.sqrt(1.0 / self._interp.params[2:4]))
-        self.beam_height = self._interp.params[4]
-        self.poly_x = self._interp.params[5:5 + len(self.poly_x)]
-        self.poly_y = self._interp.params[5 + len(self.poly_x):]
+        self.center = self._interp.mean
+        self.width = sigma_to_fwhm(np.sqrt(self._interp.var))
+        self.height = self._interp.height
         
     def __call__(self, x):
         """Evaluate function ``y = f(x)`` on new data.
@@ -166,35 +115,36 @@ class BeamBaselineComboFit(ScatterFit):
         
         """
         return self._interp(x)
-    
-    def baseline(self, x):
-        """Evaluate baseline only at given target coordinates.
+        
+    def is_valid(self, expected_width):
+        """Check whether beam parameters are valid and within acceptable bounds.
         
         Parameters
         ----------
-        x : array, shape (M, 2)
-            Sequence of 2-dimensional target coordinates
+        expected_width : float
+            Expected FWHM beamwidth
         
         Returns
         -------
-        y : array, shape (M,)
-            Sequence of total power values representing fitted baseline only
+        is_valid : bool
+            True if beam parameters check out OK.
         
         """
-        xy_min_mu = x - self.beam_center
-        return np.polyval(self.poly_x, xy_min_mu[:, 0]) * np.polyval(self.poly_y,  xy_min_mu[:, 1])
-
+        return not np.any(np.isnan(self.center)) and (self.height > 0.0) and \
+               (np.max(self.width) < 3.0 * expected_width) and \
+               (np.min(self.width) > expected_width / 1.4)
+    
 #--------------------------------------------------------------------------------------------------
 #--- FUNCTION :  fit_beam_and_baseline
 #--------------------------------------------------------------------------------------------------
 
-def fit_beam_and_baseline(scan, expected_width, band=0):
-    """Simultaneously fit beam and baseline to all subscans in a scan.
+def fit_beam_and_baseline(compscan, expected_width, bl_degrees=(3, 3), refine_beam=False, band=0):
+    """Simultaneously fit beam and baseline to all scans in a compound scan.
     
     This fits a beam pattern and baseline to the total power data in all the
-    subscans comprising the scan, as a function of the two-dimensional target
-    coordinates. Only one frequency band is used. The power data is smoothed
-    before fitting to remove spikes.
+    scans comprising the compound scan, as a function of the two-dimensional
+    target coordinates. Only one frequency band is used. The power data is
+    smoothed to remove spikes before fitting.
     
     Parameters
     ----------
@@ -202,35 +152,58 @@ def fit_beam_and_baseline(scan, expected_width, band=0):
         Scan data used to fit beam and baseline
     expected_width : float
         Expected beamwidth based on antenna diameter, expressed as FWHM in radians
+    bl_degrees : list of 2 ints, optional
+        Degree of baseline polynomial along x and y target coordinates
+    refine_beam : bool, optional
+        True if final beam fit is only to points within FWHM region around peak
     band : int, optional
         Frequency band in which to fit beam and baseline
     
     Returns
     -------
-    fitted_beam : :class:`BeamBaselineComboFit` object
-        Object that describes fitted beam and baseline
+    beam : :class:`BeamPatternFit` object
+        Object that describes fitted beam
+    baseline : :class:`fitting.Polynomial2DFit` object
+        Object that describes fitted baseline
     
     Notes
     -----
     The beam part of the fit fits a Gaussian shape to power data, with the peak
     location as initial mean, and an initial standard deviation based on the
-    expected beamwidth. It uses all power values in the fitting process, instead
-    of only the points within the half-power beamwidth of the peak as suggested
-    in [1]_. This seems to be more robust for weak sources, but with more samples
-    close to the peak, things might change again.
+    expected beamwidth. It initially uses all power values in the fitting
+    process, instead of only the points within the half-power beamwidth of the
+    peak as suggested in [1]_. This seems to be more robust for weak sources.
+    The *refine_beam* option adds a final fitting step according to [1]_.
     
     .. [1] Ronald J. Maddalena, "Reduction and Analysis Techniques," Single-Dish
        Radio Astronomy: Techniques and Applications, ASP Conference Series,
        vol. 278, 2002.
     
     """
-    total_power = np.hstack([remove_spikes(ss.stokes('I')[:, band]) for ss in scan.subscans])
-    target_coords = np.hstack([ss.target_coords for ss in scan.subscans])
-    peak_ind = total_power.argmax()
-    peak_val = total_power[peak_ind]
-    peak_pos = target_coords[:, peak_ind]
-    power_floor = total_power.min()
-    interp = BeamBaselineComboFit(peak_pos, [expected_width] * 2, peak_val - power_floor,
-                                  [0.0, 1.0], [0.0, power_floor])
-    interp.fit(target_coords.transpose(), total_power)
-    return interp
+    total_power = np.hstack([remove_spikes(scan.stokes('I')[:, band]) for scan in compscan.scans])
+    target_coords = np.hstack([scan.target_coords for scan in compscan.scans])
+    baseline = Polynomial2DFit(bl_degrees)
+    max_iters = 30
+    prev_err_power = np.inf
+    resid_change = 1e-5
+    outer = np.tile(True, len(total_power))
+    for n in xrange(max_iters):
+        baseline.fit(target_coords[:, outer], total_power[outer])
+        bl_resid = total_power - baseline(target_coords)
+        peak_ind = bl_resid.argmax()
+        peak_pos = target_coords[:, peak_ind]
+        peak_val = bl_resid[peak_ind]
+        beam = BeamPatternFit(peak_pos, [expected_width] * 2, peak_val)
+        beam.fit(target_coords.transpose(), bl_resid)
+        resid = bl_resid - beam(target_coords.transpose())
+        dist_to_center = np.sqrt(((target_coords - beam.center[:, np.newaxis]) ** 2).sum(axis=0))
+        outer = dist_to_center > 1.3 * expected_width
+        err_power = np.dot(resid, resid)
+        print n, ", res =", (prev_err_power - err_power) / err_power, ", height =", beam.height, ", outer =", outer.sum()
+        if (err_power == 0.0) or (prev_err_power - err_power) / err_power < resid_change:
+            break
+        prev_err_power = err_power + 0.0
+    if refine_beam:
+        inner = dist_to_center < expected_width / 2.0
+        beam.fit(target_coords[:, inner].transpose(), bl_resid[inner])
+    return beam, baseline
