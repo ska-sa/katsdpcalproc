@@ -66,16 +66,18 @@ class BeamPatternFit(ScatterFit):
     Parameters
     ----------
     center : real array-like, shape (2,)
-        Initial guess of 2-element Gaussian mean vector
-    width : real array-like, shape (2,)
-        Initial guess of 2-element variance vector, expressed as FWHM widths
+        Initial guess of 2-element beam center, in target coordinate units
+    width : real array-like, shape (2,), or float
+        Initial guess of single beamwidth for both dimensions, or 2-element
+        beamwidth vector, expressed as FWHM in units of target coordinates
     height : float
-        Initial guess of height of Gaussian curve
+        Initial guess of beam pattern amplitude or height
     
     """
     def __init__(self, center, width, height):
         ScatterFit.__init__(self)
-        width = np.atleast_1d(np.asarray(width))
+        if not np.isscalar(width):
+            width = np.atleast_1d(np.asarray(width))
         self._interp = GaussianFit(center, fwhm_to_sigma(width) ** 2.0, height)
         self.center = self._interp.mean
         self.width = sigma_to_fwhm(np.sqrt(self._interp.var))
@@ -193,13 +195,13 @@ def fit_beam_and_baseline(compscan, expected_width, bl_degrees=(3, 3), refine_be
         peak_ind = bl_resid.argmax()
         peak_pos = target_coords[:, peak_ind]
         peak_val = bl_resid[peak_ind]
-        beam = BeamPatternFit(peak_pos, [expected_width] * 2, peak_val)
+        beam = BeamPatternFit(peak_pos, expected_width, peak_val)
         beam.fit(target_coords.transpose(), bl_resid)
         resid = bl_resid - beam(target_coords.transpose())
         dist_to_center = np.sqrt(((target_coords - beam.center[:, np.newaxis]) ** 2).sum(axis=0))
         outer = dist_to_center > 1.3 * expected_width
         err_power = np.dot(resid, resid)
-        print n, ", res =", (prev_err_power - err_power) / err_power, ", height =", beam.height, ", outer =", outer.sum()
+#        print n, ", res =", (prev_err_power - err_power) / err_power, ", height =", beam.height, ", outer =", outer.sum()
         if (err_power == 0.0) or (prev_err_power - err_power) / err_power < resid_change:
             break
         prev_err_power = err_power + 0.0
