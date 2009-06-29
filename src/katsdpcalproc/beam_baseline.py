@@ -3,8 +3,8 @@
 import numpy as np
 import scipy.special as special
 
-from .fitting import ScatterFit, Polynomial2DFit, GaussianFit
-from .stats import remove_spikes
+from .fitting import ScatterFit, Polynomial1DFit, Polynomial2DFit, GaussianFit, Delaunay2DScatterFit
+from .stats import remove_spikes, chi2_conf_interval
 
 def jinc(x):
     """The ``jinc`` function, a circular analogue to the ``sinc`` function.
@@ -73,6 +73,14 @@ class BeamPatternFit(ScatterFit):
     height : float
         Initial guess of beam pattern amplitude or height
     
+    Arguments
+    ---------
+    expected_width : float
+        Initial guess of beamwidth, saved as expected average width for checks
+    radius_first_null : float
+        Radius of first null in beam in target coordinate units (stored here for
+        convenience, but not calculated internally)
+    
     """
     def __init__(self, center, width, height):
         ScatterFit.__init__(self)
@@ -82,6 +90,10 @@ class BeamPatternFit(ScatterFit):
         self.center = self._interp.mean
         self.width = sigma_to_fwhm(np.sqrt(self._interp.var))
         self.height = self._interp.height
+        
+        self.expected_width = np.mean(width)
+        # Initial guess for radius of first null
+        self.radius_first_null = 1.3 * self.expected_width
     
     def fit(self, x, y):
         """Fit a beam pattern to data.
@@ -118,55 +130,44 @@ class BeamPatternFit(ScatterFit):
         """
         return self._interp(x)
         
-    def is_valid(self, expected_width):
-        """Check whether beam parameters are valid and within acceptable bounds.
-        
-        Parameters
-        ----------
-        expected_width : float
-            Expected FWHM beamwidth
-        
-        Returns
-        -------
-        is_valid : bool
-            True if beam parameters check out OK.
-        
-        """
+    def is_valid(self):
+        """Check whether beam parameters are valid and within acceptable bounds."""
         return not np.any(np.isnan(self.center)) and (self.height > 0.0) and \
-               (np.max(self.width) < 3.0 * expected_width) and \
-               (np.min(self.width) > expected_width / 1.4)
-    
+               (np.max(self.width) < 3.0 * self.expected_width) and \
+               (np.min(self.width) > self.expected_width / 1.4)
+
 #--------------------------------------------------------------------------------------------------
-#--- FUNCTION :  fit_beam_and_baseline
+#--- FUNCTION :  fit_beam_and_baselines
 #--------------------------------------------------------------------------------------------------
 
-def fit_beam_and_baseline(compscan, expected_width, bl_degrees=(3, 3), refine_beam=False, band=0):
-    """Simultaneously fit beam and baseline to all scans in a compound scan.
+def fit_beam_and_baselines(compscan, expected_width, dof, band=0):
+    """Simultaneously fit beam and baselines to all scans in a compound scan.
     
-    This fits a beam pattern and baseline to the total power data in all the
-    scans comprising the compound scan, as a function of the two-dimensional
-    target coordinates. Only one frequency band is used. The power data is
-    smoothed to remove spikes before fitting.
+    This fits a beam pattern and baselines to the total power data in all the
+    scans comprising the compound scan. The beam pattern is a Gaussian function
+    of the two-dimensional target coordinates for the entire compound scan,
+    while the baselines are first-order polynomial functions of time per scan.
+    Only one frequency band is used. The power data is smoothed to remove spikes
+    before fitting.
     
     Parameters
     ----------
-    scan : :class:`scan.Scan` object
-        Scan data used to fit beam and baseline
+    compscan : :class:`compoundscan.CompoundScan` object
+        Compound scan data used to fit beam and baselines
     expected_width : float
         Expected beamwidth based on antenna diameter, expressed as FWHM in radians
-    bl_degrees : list of 2 ints, optional
-        Degree of baseline polynomial along x and y target coordinates
-    refine_beam : bool, optional
-        True if final beam fit is only to points within FWHM region around peak
+    dof : float
+        Degrees of freedom of chi^2 distribution of total power samples
     band : int, optional
-        Frequency band in which to fit beam and baseline
+        Frequency band in which to fit beam and baselines
     
     Returns
     -------
     beam : :class:`BeamPatternFit` object
-        Object that describes fitted beam
-    baseline : :class:`fitting.Polynomial2DFit` object
-        Object that describes fitted baseline
+        Object that describes beam fitted across compound scan
+    baselines : list of :class:`fitting.Polynomial1DFit` objects
+        List of fitted baseline objects, one per scan (or None for scans that
+        were not fitted)
     
     Notes
     -----
@@ -175,37 +176,131 @@ def fit_beam_and_baseline(compscan, expected_width, bl_degrees=(3, 3), refine_be
     expected beamwidth. It initially uses all power values in the fitting
     process, instead of only the points within the half-power beamwidth of the
     peak as suggested in [1]_. This seems to be more robust for weak sources.
-    The *refine_beam* option adds a final fitting step according to [1]_.
+    It also fits a 2-D polynomial as initial baseline, across the entire
+    compound scan, as part of an iterative fitting process.
+    
+    The second stage of the fitting uses the first nulls of the fitted beam to
+    fit first-order polynomial baselines per scan, as functions of time. Scans
+    that do not contain beam nulls are ignored. The beam is finally refined by
+    fitting it only to the inner region of the beam, as in [1]_.
     
     .. [1] Ronald J. Maddalena, "Reduction and Analysis Techniques," Single-Dish
        Radio Astronomy: Techniques and Applications, ASP Conference Series,
        vol. 278, 2002.
     
     """
-    total_power = np.hstack([remove_spikes(scan.stokes('I')[:, band]) for scan in compscan.scans])
+    scan_power = [remove_spikes(scan.stokes('I')[:, band]) for scan in compscan.scans]
+    total_power = np.hstack(scan_power)
     target_coords = np.hstack([scan.target_coords for scan in compscan.scans])
-    baseline = Polynomial2DFit(bl_degrees)
-    max_iters = 30
+    bl_degrees = (3, 3)
+    initial_baseline = Polynomial2DFit(bl_degrees)
     prev_err_power = np.inf
-    resid_change = 1e-5
     outer = np.tile(True, len(total_power))
-    for n in xrange(max_iters):
-        baseline.fit(target_coords[:, outer], total_power[outer])
-        bl_resid = total_power - baseline(target_coords)
+    logger.debug('Fitting beam and initial baseline of degree (%d, %d):' % bl_degrees)
+    for n in xrange(10):
+        initial_baseline.fit(target_coords[:, outer], total_power[outer])
+        bl_resid = total_power - initial_baseline(target_coords)
         peak_ind = bl_resid.argmax()
         peak_pos = target_coords[:, peak_ind]
         peak_val = bl_resid[peak_ind]
         beam = BeamPatternFit(peak_pos, expected_width, peak_val)
         beam.fit(target_coords.transpose(), bl_resid)
         resid = bl_resid - beam(target_coords.transpose())
-        dist_to_center = np.sqrt(((target_coords - beam.center[:, np.newaxis]) ** 2).sum(axis=0))
-        outer = dist_to_center > 1.3 * expected_width
+        radius = np.sqrt(((target_coords - beam.center[:, np.newaxis]) ** 2).sum(axis=0))
+        # This threshold should be close to first nulls of beam - too wide compromises baseline fit
+        outer = radius > beam.radius_first_null
         err_power = np.dot(resid, resid)
-#        print n, ", res =", (prev_err_power - err_power) / err_power, ", height =", beam.height, ", outer =", outer.sum()
-        if (err_power == 0.0) or (prev_err_power - err_power) / err_power < resid_change:
+        logger.debug("Iteration %d: residual = %f, beam height = %f, width = %f" %
+                     (n, (prev_err_power - err_power) / err_power, beam.height, beam.width))
+        if (err_power == 0.0) or (prev_err_power - err_power) / err_power < 1e-5:
             break
         prev_err_power = err_power + 0.0
-    if refine_beam:
-        inner = dist_to_center < expected_width / 2.0
-        beam.fit(target_coords[:, inner].transpose(), bl_resid[inner])
-    return beam, baseline
+    
+    # Find first null, by moving outward from beam center in radius range where null is expected
+    for null in np.arange(1.2, 1.8, 0.01) * beam.width:
+        inside_null = (radius > null - 0.2 * beam.width) & (radius <= null)
+        outside_null = (radius > null) & (radius <= null + 0.2 * beam.width)
+        # Stop if end of scanned region is reached
+        if (inside_null.sum() < 20) or (outside_null.sum() < 20):
+            break
+        # Use median to ignore isolated RFI bumps in some scans
+        # Stop when total power starts increasing again as a function of radius
+        if np.median(total_power[outside_null]) > np.median(total_power[inside_null]):
+            break
+    beam.radius_first_null = null
+    
+    good_scan_coords, good_scan_resid, baselines = [], [], []
+    for n, scan in enumerate(compscan.scans):
+        radius = np.sqrt(((scan.target_coords - beam.center[:, np.newaxis]) ** 2).sum(axis=0))
+        around_null = np.abs(radius - beam.radius_first_null) < 0.2 * beam.width
+        padded_selection = np.array([False] + around_null.tolist() + [False])
+        borders = np.diff(padded_selection).nonzero()[0] + 1
+        if (padded_selection[borders].tolist() != [True, False, True, False]) or (borders[2] - borders[1] < 10):
+            baselines.append(None)
+            continue
+        # Calculate standard deviation of samples, based on "ideal total-power radiometer equation"
+        mean = scan_power[n].min()
+        lower, upper = chi2_conf_interval(dof, mean)
+        # Move baseline down as low as possible, taking confidence interval into account
+        baseline = Polynomial1DFit(max_degree=1)
+        for iteration in range(7):
+            baseline.fit(scan.timestamps[around_null], scan_power[n][around_null])
+            bl_resid = scan_power[n] - baseline(scan.timestamps)
+            around_null = bl_resid < 1.2 * (upper - mean)
+        baselines.append(baseline)
+        inner = radius < 0.6 * beam.width
+        if inner.any():
+            good_scan_coords.append(scan.target_coords[:, inner])
+            good_scan_resid.append(bl_resid[inner])
+    # Beam height is underestimated, as remove_spikes() flattens beam top - adjust it based on Gaussian beam
+    beam.fit(np.hstack(good_scan_coords).transpose(), 1.0047 * np.hstack(good_scan_resid))
+    logger.debug("Beam refinement: beam height = %f, width = %f, first null = %f, based on %d of %d scans" % \
+                 (beam.height, beam.width, beam.radius_first_null, len(good_scan_resid), len(compscan.scans)))
+    
+    return beam, baselines
+
+#--------------------------------------------------------------------------------------------------
+#--- FUNCTION :  interpolate_measured_beam
+#--------------------------------------------------------------------------------------------------
+
+def interpolate_measured_beam(x, y, z, num_grid_rows=201):
+    """Interpolate measured beam pattern contained in a raster scan.
+    
+    Parameters
+    ----------
+    x : array-like of float, shape (N,)
+        Sequence of *x* target coordinates
+    y : array-like of float, shape (N,)
+        Sequence of *y* target coordinates
+    z : array-like of float, shape (N,)
+        Sequence of *z* measurements
+    num_grid_rows : int, optional
+        Number of grid points on each axis, referred to as M below
+    
+    Returns
+    -------
+    grid_x : array of float, shape (M,)
+        Array of *x* coordinates of grid
+    grid_y : array of float, shape (M,)
+        Array of *y* coordinates of grid
+    smooth_z : array of float, shape (M, M)
+        Interpolated *z* values, as a matrix
+    
+    """
+    # Set up grid points that include the origin at the center and stays within convex hull of samples
+    x_lims = [np.min(x), np.max(x)]
+    y_lims = [np.min(y), np.max(y)]
+    assert (np.prod(x_lims) < 0.0) and (np.prod(y_lims) < 0.0), 'Raster scans should cross target'
+    grid_x = np.abs(x_lims).min() * np.linspace(-1.0, 1.0, num_grid_rows)
+    grid_y = np.abs(y_lims).min() * np.linspace(-1.0, 1.0, num_grid_rows)
+    
+    # Obtain smooth interpolator for z data
+    interp = Delaunay2DScatterFit(default_val=0.0, jitter=True)
+    interp.fit([x, y], z)
+    
+    # Evaluate interpolator on grid
+    mesh_x, mesh_y = np.meshgrid(grid_x, grid_y)
+    mesh = np.vstack((mesh_x.ravel(), mesh_y.ravel()))
+    smooth_z = interp(mesh).reshape(grid_y.size, grid_x.size)
+    
+    return grid_x, grid_y, smooth_z
