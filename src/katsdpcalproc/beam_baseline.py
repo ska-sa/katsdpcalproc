@@ -133,8 +133,8 @@ class BeamPatternFit(ScatterFit):
     def is_valid(self):
         """Check whether beam parameters are valid and within acceptable bounds."""
         return not np.any(np.isnan(self.center)) and (self.height > 0.0) and \
-               (np.max(self.width) < 3.0 * self.expected_width) and \
-               (np.min(self.width) > self.expected_width / 1.4)
+               (np.min(self.width) > 0.9 * self.expected_width) and \
+               (np.max(self.width) < 1.25 * self.expected_width) 
 
 #--------------------------------------------------------------------------------------------------
 #--- FUNCTION :  fit_beam_and_baselines
