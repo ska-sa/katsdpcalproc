@@ -80,6 +80,10 @@ class BeamPatternFit(ScatterFit):
     radius_first_null : float
         Radius of first null in beam in target coordinate units (stored here for
         convenience, but not calculated internally)
+    is_refined : bool
+        True if beam has been refined based on scan-based baselines
+    is_valid : bool
+        True if beam parameters are within reasonable ranges after fit
     
     """
     def __init__(self, center, width, height):
@@ -94,7 +98,10 @@ class BeamPatternFit(ScatterFit):
         self.expected_width = np.mean(width)
         # Initial guess for radius of first null
         self.radius_first_null = 1.3 * self.expected_width
-    
+        # Beam initially unrefined and invalid
+        self.is_refined = False
+        self.is_valid = False
+        
     def fit(self, x, y):
         """Fit a beam pattern to data.
         
@@ -113,6 +120,9 @@ class BeamPatternFit(ScatterFit):
         self.center = self._interp.mean
         self.width = sigma_to_fwhm(np.sqrt(self._interp.var))
         self.height = self._interp.height
+        self.is_valid = not np.any(np.isnan(self.center)) and (self.height > 0.0) and \
+                        (np.min(self.width) > 0.9 * self.expected_width) and \
+                        (np.max(self.width) < 1.25 * self.expected_width)
         
     def __call__(self, x):
         """Evaluate function ``y = f(x)`` on new data.
@@ -130,12 +140,6 @@ class BeamPatternFit(ScatterFit):
         """
         return self._interp(x)
         
-    def is_valid(self):
-        """Check whether beam parameters are valid and within acceptable bounds."""
-        return not np.any(np.isnan(self.center)) and (self.height > 0.0) and \
-               (np.min(self.width) > 0.9 * self.expected_width) and \
-               (np.max(self.width) < 1.25 * self.expected_width) 
-
 #--------------------------------------------------------------------------------------------------
 #--- FUNCTION :  fit_beam_and_baselines
 #--------------------------------------------------------------------------------------------------
@@ -189,10 +193,12 @@ def fit_beam_and_baselines(compscan, expected_width, dof, band=0):
        vol. 278, 2002.
     
     """
-    scan_power = [remove_spikes(scan.stokes('I')[:, band]) for scan in compscan.scans]
+    # Clean up total power
+    scan_power = [remove_spikes(scan.stokes(stokes)[:, band]) for scan in compscan.scans]
     total_power = np.hstack(scan_power)
     target_coords = np.hstack([scan.target_coords for scan in compscan.scans])
-    bl_degrees = (3, 3)
+    
+    # Do initial beam + baseline fitting, where baseline is fitted in target coord space
     initial_baseline = Polynomial2DFit(bl_degrees)
     prev_err_power = np.inf
     outer = np.tile(True, len(total_power))
@@ -229,6 +235,7 @@ def fit_beam_and_baselines(compscan, expected_width, dof, band=0):
             break
     beam.radius_first_null = null
     
+    # Refine beam by redoing baseline fits on per-scan basis, fitted against time
     good_scan_coords, good_scan_resid, baselines = [], [], []
     for n, scan in enumerate(compscan.scans):
         radius = np.sqrt(((scan.target_coords - beam.center[:, np.newaxis]) ** 2).sum(axis=0))
@@ -252,12 +259,14 @@ def fit_beam_and_baselines(compscan, expected_width, dof, band=0):
         if inner.any():
             good_scan_coords.append(scan.target_coords[:, inner])
             good_scan_resid.append(bl_resid[inner])
-    # Beam height is underestimated, as remove_spikes() flattens beam top - adjust it based on Gaussian beam
-    beam.fit(np.hstack(good_scan_coords).transpose(), 1.0047 * np.hstack(good_scan_resid))
-    logger.debug("Beam refinement: beam height = %f, width = %f, first null = %f, based on %d of %d scans" % \
-                 (beam.height, beam.width, beam.radius_first_null, len(good_scan_resid), len(compscan.scans)))
-    
-    return beam, baselines
+    # Need at least 2 good scans, since fitting beam to single scan will introduce large errors in perpendicular dir
+    if len(good_scan_coords) > 1:
+        # Beam height is underestimated, as remove_spikes() flattens beam top - adjust it based on Gaussian beam
+        beam.fit(np.hstack(good_scan_coords).transpose(), 1.0047 * np.hstack(good_scan_resid))
+        beam.is_refined = True
+        logger.debug("Refinement: beam height = %f, width = %f, first null = %f, based on %d of %d scans" % \
+                     (beam.height, beam.width, beam.radius_first_null, len(good_scan_resid), len(compscan.scans)))
+    return beam, baselines, initial_baseline
 
 #--------------------------------------------------------------------------------------------------
 #--- FUNCTION :  interpolate_measured_beam
