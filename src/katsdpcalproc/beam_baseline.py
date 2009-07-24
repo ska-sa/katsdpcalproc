@@ -8,14 +8,14 @@ from .stats import remove_spikes, chi2_conf_interval
 
 def jinc(x):
     """The ``jinc`` function, a circular analogue to the ``sinc`` function.
-    
+
     This calculates the ``jinc`` function, defined as
-    
+
         ``jinc(x) = 2.0 * J_1 (pi * x) / (pi * x),``
-    
+
     where J_1(x) is the Bessel function of the first kind of order 1. It is
     similar to the more well-known sinc function. The function is vectorised.
-    
+
     """
     if np.isscalar(x):
         if x == 0.0:
@@ -30,39 +30,39 @@ def jinc(x):
 
 def fwhm_to_sigma(fwhm):
     """Standard deviation of Gaussian function with specified FWHM beamwidth.
-    
+
     This returns the standard deviation of a Gaussian beam pattern with a
     specified full-width half-maximum (FWHM) beamwidth. This beamwidth is the
     width between the two points left and right of the peak where the Gaussian
     function attains half its maximum value.
-    
+
     """
     # Gaussian function reaches half its peak value at sqrt(2 log 2)*sigma => should equal beamwidth/2
     return fwhm / 2.0 / np.sqrt(2.0 * np.log(2.0))
 
 def sigma_to_fwhm(sigma):
     """FWHM beamwidth of Gaussian function with specified standard deviation.
-    
+
     This returns the full-width half-maximum (FWHM) beamwidth of a Gaussian beam
     pattern with a specified standard deviation. This beamwidth is the width
     between the two points left and right of the peak where the Gaussian
     function attains half its maximum value.
-    
+
     """
     # Gaussian function reaches half its peak value at sqrt(2 log 2)*sigma => should equal beamwidth/2
     return 2.0 * np.sqrt(2.0 * np.log(2.0)) * sigma
-    
+
 #--------------------------------------------------------------------------------------------------
 #--- CLASS :  BeamPatternFit
 #--------------------------------------------------------------------------------------------------
 
 class BeamPatternFit(ScatterFit):
     """Fit analytic beam pattern to total power data defined on 2-D plane.
-    
+
     This fits a two-dimensional Gaussian curve (with diagonal covariance matrix)
     to total power data as a function of 2-D coordinates. The Gaussian bump
     represents an antenna beam pattern convolved with a point source.
-    
+
     Parameters
     ----------
     center : real array-like, shape (2,)
@@ -72,7 +72,7 @@ class BeamPatternFit(ScatterFit):
         beamwidth vector, expressed as FWHM in units of target coordinates
     height : float
         Initial guess of beam pattern amplitude or height
-    
+
     Arguments
     ---------
     expected_width : float
@@ -84,7 +84,7 @@ class BeamPatternFit(ScatterFit):
         True if beam has been refined based on scan-based baselines
     is_valid : bool
         True if beam parameters are within reasonable ranges after fit
-    
+
     """
     def __init__(self, center, width, height):
         ScatterFit.__init__(self)
@@ -94,27 +94,27 @@ class BeamPatternFit(ScatterFit):
         self.center = self._interp.mean
         self.width = sigma_to_fwhm(np.sqrt(self._interp.var))
         self.height = self._interp.height
-        
+
         self.expected_width = np.mean(width)
         # Initial guess for radius of first null
         self.radius_first_null = 1.3 * self.expected_width
         # Beam initially unrefined and invalid
         self.is_refined = False
         self.is_valid = False
-        
+
     def fit(self, x, y):
         """Fit a beam pattern to data.
-        
+
         The center, width and height of the fitted beam pattern can be obtained
         from the corresponding member variables after this is run.
-        
+
         Parameters
         ----------
         x : array, shape (N, 2)
             Sequence of 2-dimensional target coordinates
         y : array, shape (N,)
             Sequence of corresponding total power values to fit
-        
+
         """
         self._interp.fit(x, y)
         self.center = self._interp.mean
@@ -123,37 +123,37 @@ class BeamPatternFit(ScatterFit):
         self.is_valid = not np.any(np.isnan(self.center)) and (self.height > 0.0) and \
                         (np.min(self.width) > 0.9 * self.expected_width) and \
                         (np.max(self.width) < 1.25 * self.expected_width)
-        
+
     def __call__(self, x):
         """Evaluate function ``y = f(x)`` on new data.
-        
+
         Parameters
         ----------
         x : array, shape (M, 2)
             Sequence of 2-dimensional target coordinates
-        
+
         Returns
         -------
         y : array, shape (M,)
             Sequence of total power values representing fitted beam plus baseline
-        
+
         """
         return self._interp(x)
-        
+
 #--------------------------------------------------------------------------------------------------
 #--- FUNCTION :  fit_beam_and_baselines
 #--------------------------------------------------------------------------------------------------
 
 def fit_beam_and_baselines(compscan, expected_width, dof, band=0):
     """Simultaneously fit beam and baselines to all scans in a compound scan.
-    
+
     This fits a beam pattern and baselines to the total power data in all the
     scans comprising the compound scan. The beam pattern is a Gaussian function
     of the two-dimensional target coordinates for the entire compound scan,
     while the baselines are first-order polynomial functions of time per scan.
     Only one frequency band is used. The power data is smoothed to remove spikes
     before fitting.
-    
+
     Parameters
     ----------
     compscan : :class:`compoundscan.CompoundScan` object
@@ -164,7 +164,7 @@ def fit_beam_and_baselines(compscan, expected_width, dof, band=0):
         Degrees of freedom of chi^2 distribution of total power samples
     band : int, optional
         Frequency band in which to fit beam and baselines
-    
+
     Returns
     -------
     beam : :class:`BeamPatternFit` object
@@ -172,7 +172,9 @@ def fit_beam_and_baselines(compscan, expected_width, dof, band=0):
     baselines : list of :class:`fitting.Polynomial1DFit` objects
         List of fitted baseline objects, one per scan (or None for scans that
         were not fitted)
-    
+    initial_baseline : :class:`fitting.Polynomial2DFit` object
+        Initial 2-D polynomial baseline, one for whole compound scan
+
     Notes
     -----
     The beam part of the fit fits a Gaussian shape to power data, with the peak
@@ -182,22 +184,22 @@ def fit_beam_and_baselines(compscan, expected_width, dof, band=0):
     peak as suggested in [1]_. This seems to be more robust for weak sources.
     It also fits a 2-D polynomial as initial baseline, across the entire
     compound scan, as part of an iterative fitting process.
-    
+
     The second stage of the fitting uses the first nulls of the fitted beam to
     fit first-order polynomial baselines per scan, as functions of time. Scans
     that do not contain beam nulls are ignored. The beam is finally refined by
     fitting it only to the inner region of the beam, as in [1]_.
-    
+
     .. [1] Ronald J. Maddalena, "Reduction and Analysis Techniques," Single-Dish
        Radio Astronomy: Techniques and Applications, ASP Conference Series,
        vol. 278, 2002.
-    
+
     """
     # Clean up total power
     scan_power = [remove_spikes(scan.stokes(stokes)[:, band]) for scan in compscan.scans]
     total_power = np.hstack(scan_power)
     target_coords = np.hstack([scan.target_coords for scan in compscan.scans])
-    
+
     # Do initial beam + baseline fitting, where baseline is fitted in target coord space
     initial_baseline = Polynomial2DFit(bl_degrees)
     prev_err_power = np.inf
@@ -221,7 +223,7 @@ def fit_beam_and_baselines(compscan, expected_width, dof, band=0):
         if (err_power == 0.0) or (prev_err_power - err_power) / err_power < 1e-5:
             break
         prev_err_power = err_power + 0.0
-    
+
     # Find first null, by moving outward from beam center in radius range where null is expected
     for null in np.arange(1.2, 1.8, 0.01) * beam.width:
         inside_null = (radius > null - 0.2 * beam.width) & (radius <= null)
@@ -234,7 +236,7 @@ def fit_beam_and_baselines(compscan, expected_width, dof, band=0):
         if np.median(total_power[outside_null]) > np.median(total_power[inside_null]):
             break
     beam.radius_first_null = null
-    
+
     # Refine beam by redoing baseline fits on per-scan basis, fitted against time
     good_scan_coords, good_scan_resid, baselines = [], [], []
     for n, scan in enumerate(compscan.scans):
@@ -274,7 +276,7 @@ def fit_beam_and_baselines(compscan, expected_width, dof, band=0):
 
 def interpolate_measured_beam(x, y, z, num_grid_rows=201):
     """Interpolate measured beam pattern contained in a raster scan.
-    
+
     Parameters
     ----------
     x : array-like of float, shape (N,)
@@ -285,7 +287,7 @@ def interpolate_measured_beam(x, y, z, num_grid_rows=201):
         Sequence of *z* measurements
     num_grid_rows : int, optional
         Number of grid points on each axis, referred to as M below
-    
+
     Returns
     -------
     grid_x : array of float, shape (M,)
@@ -294,7 +296,7 @@ def interpolate_measured_beam(x, y, z, num_grid_rows=201):
         Array of *y* coordinates of grid
     smooth_z : array of float, shape (M, M)
         Interpolated *z* values, as a matrix
-    
+
     """
     # Set up grid points that include the origin at the center and stays within convex hull of samples
     x_lims = [np.min(x), np.max(x)]
@@ -302,14 +304,14 @@ def interpolate_measured_beam(x, y, z, num_grid_rows=201):
     assert (np.prod(x_lims) < 0.0) and (np.prod(y_lims) < 0.0), 'Raster scans should cross target'
     grid_x = np.abs(x_lims).min() * np.linspace(-1.0, 1.0, num_grid_rows)
     grid_y = np.abs(y_lims).min() * np.linspace(-1.0, 1.0, num_grid_rows)
-    
+
     # Obtain smooth interpolator for z data
     interp = Delaunay2DScatterFit(default_val=0.0, jitter=True)
     interp.fit([x, y], z)
-    
+
     # Evaluate interpolator on grid
     mesh_x, mesh_y = np.meshgrid(grid_x, grid_y)
     mesh = np.vstack((mesh_x.ravel(), mesh_y.ravel()))
     smooth_z = interp(mesh).reshape(grid_y.size, grid_x.size)
-    
+
     return grid_x, grid_y, smooth_z
