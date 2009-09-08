@@ -80,8 +80,8 @@ class BeamPatternFit(ScatterFit):
     radius_first_null : float
         Radius of first null in beam in target coordinate units (stored here for
         convenience, but not calculated internally)
-    is_refined : bool
-        True if beam has been refined based on scan-based baselines
+    refined : int
+        Number of scan-based baselines used to refine beam (0 means unrefined)
     is_valid : bool
         True if beam parameters are within reasonable ranges after fit
 
@@ -99,7 +99,7 @@ class BeamPatternFit(ScatterFit):
         # Initial guess for radius of first null
         self.radius_first_null = 1.3 * self.expected_width
         # Beam initially unrefined and invalid
-        self.is_refined = False
+        self.refined = 0
         self.is_valid = False
 
     def fit(self, x, y):
@@ -239,35 +239,73 @@ def fit_beam_and_baselines(compscan, expected_width, dof, band=0):
 
     # Refine beam by redoing baseline fits on per-scan basis, fitted against time
     good_scan_coords, good_scan_resid, baselines = [], [], []
-    for n, scan in enumerate(compscan.scans):
-        radius = np.sqrt(((scan.target_coords - beam.center[:, np.newaxis]) ** 2).sum(axis=0))
-        around_null = np.abs(radius - beam.radius_first_null) < 0.2 * beam.width
-        padded_selection = np.array([False] + around_null.tolist() + [False])
-        borders = np.diff(padded_selection).nonzero()[0] + 1
-        if (padded_selection[borders].tolist() != [True, False, True, False]) or (borders[2] - borders[1] < 10):
-            baselines.append(None)
-            continue
-        # Calculate standard deviation of samples, based on "ideal total-power radiometer equation"
-        mean = scan_power[n].min()
-        lower, upper = chi2_conf_interval(dof, mean)
-        # Move baseline down as low as possible, taking confidence interval into account
-        baseline = Polynomial1DFit(max_degree=1)
-        for iteration in range(7):
-            baseline.fit(scan.timestamps[around_null], scan_power[n][around_null])
-            bl_resid = scan_power[n] - baseline(scan.timestamps)
-            around_null = bl_resid < 1.2 * (upper - mean)
-        baselines.append(baseline)
-        inner = radius < 0.6 * beam.width
-        if inner.any():
-            good_scan_coords.append(scan.target_coords[:, inner])
-            good_scan_resid.append(bl_resid[inner])
-    # Need at least 2 good scans, since fitting beam to single scan will introduce large errors in perpendicular dir
-    if len(good_scan_coords) > 1:
-        # Beam height is underestimated, as remove_spikes() flattens beam top - adjust it based on Gaussian beam
-        beam.fit(np.hstack(good_scan_coords).transpose(), 1.0047 * np.hstack(good_scan_resid))
-        beam.is_refined = True
-        logger.debug("Refinement: beam height = %f, width = %f, first null = %f, based on %d of %d scans" % \
-                     (beam.height, beam.width, beam.radius_first_null, len(good_scan_resid), len(compscan.scans)))
+    if refine_beam:
+        for n, scan in enumerate(compscan.scans):
+            # Identify regions close to first beam null within the current scan
+            radius = np.sqrt(((scan.target_coords - beam.center[:, np.newaxis]) ** 2).sum(axis=0))
+            around_null = np.abs(radius - beam.radius_first_null) < 0.2 * beam.width
+            padded_selection = np.array([False] + around_null.tolist() + [False])
+            borders = np.diff(padded_selection).nonzero()[0] + 1
+            # Discard scan if it doesn't contain two separate null regions (with beam area in between)
+            if (padded_selection[borders].tolist() != [True, False, True, False]) or (borders[2] - borders[1] < 10):
+                baselines.append(None)
+                continue
+            # Calculate standard deviation of samples, based on "ideal total-power radiometer equation"
+            mean = scan_power[n].min()
+            upper = chi2_conf_interval(dof, mean)[1]
+            # Move baseline down as low as possible, taking confidence interval into account
+            baseline = Polynomial1DFit(max_degree=1)
+            for iteration in range(7):
+                baseline.fit(scan.timestamps[around_null], scan_power[n][around_null])
+                bl_resid = scan_power[n] - baseline(scan.timestamps)
+                next_around_null = bl_resid < 1.0 * (upper - mean)
+                if not next_around_null.any():
+                    break
+                else:
+                    around_null = next_around_null
+            # For non-positive polarisation terms, refit baseline to regions around beam null found in total power
+            if pol in ('Q', 'U', 'V'):
+                baseline.fit(scan.timestamps[around_null], scan_pol[n][around_null])
+            baselines.append(baseline)
+            # Identify inner region of beam (close to peak) within scan and add to list if any was found
+            inner = radius < 0.6 * beam.width
+            if inner.any():
+                good_scan_coords.append(scan.target_coords[:, inner])
+                good_scan_resid.append(bl_resid[inner])
+        # Need at least 2 good scans, since fitting beam to single scan will introduce large errors in orthogonal dir
+        if len(good_scan_resid) > 1:
+            # Refit beam to inner region across all good scans
+            # Beam height is underestimated, as remove_spikes() flattens beam top - adjust it based on Gaussian beam
+            beam.fit(np.hstack(good_scan_coords).transpose(), 1.0047 * np.hstack(good_scan_resid))
+            logger.debug("Refinement: beam height = %f, width = %f, first null = %f, based on %d of %d scans" % \
+                          (beam.height, beam.width, beam.radius_first_null, len(good_scan_resid), len(compscan.scans)))
+            beam.refined = len(good_scan_resid)
+
+    # Do final validation of beam fit (also discard beam for non-positive pols)
+    if (pol in ('Q', 'U', 'V')) or np.isnan(beam.center).any() or np.isnan(beam.width).any() or np.isnan(beam.height):
+        beam = None
+    else:
+        # If beam center is outside the box scanned out by the telescope, mark it as invalid (good idea to redo scans)
+        box_leeway = 0.1 * expected_width
+        scan_box = [target_coords[0].min() - box_leeway, target_coords[0].max() + box_leeway,
+                    target_coords[1].min() - box_leeway, target_coords[1].max() + box_leeway]
+        if (beam.center[0] < scan_box[0]) or (beam.center[0] > scan_box[1]) or \
+           (beam.center[1] < scan_box[2]) or (beam.center[1] > scan_box[3]):
+            beam.is_valid = False
+        # If the scan is long enough in one or both coordinates to go out to first beam null on both sides of beam,
+        # the beam center should be far enough away from the scan start and end to have the nulls inside the scan,
+        # otherwise the baseline won't be accurate
+        for scan in compscan.scans:
+            scan_limits = scan.target_coords[0].min(), scan.target_coords[0].max()
+            if (scan_limits[1] - scan_limits[0] > 2.5 * expected_width) and \
+               ((beam.center[0] < scan_limits[0] + expected_width) or \
+                (beam.center[0] > scan_limits[1] - expected_width)):
+                beam.is_valid = False
+            scan_limits = scan.target_coords[1].min(), scan.target_coords[1].max()
+            if (scan_limits[1] - scan_limits[0] > 2.5 * expected_width) and \
+               ((beam.center[1] < scan_limits[0] + expected_width) or \
+                (beam.center[1] > scan_limits[1] - expected_width)):
+                beam.is_valid = False
     return beam, baselines, initial_baseline
 
 #--------------------------------------------------------------------------------------------------
