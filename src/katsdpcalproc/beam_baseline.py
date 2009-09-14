@@ -65,9 +65,9 @@ class BeamPatternFit(ScatterFit):
 
     Parameters
     ----------
-    center : real array-like, shape (2,)
+    center : sequence of 2 floats
         Initial guess of 2-element beam center, in target coordinate units
-    width : real array-like, shape (2,), or float
+    width : sequence of 2 floats, or float
         Initial guess of single beamwidth for both dimensions, or 2-element
         beamwidth vector, expressed as FWHM in units of target coordinates
     height : float
@@ -75,8 +75,8 @@ class BeamPatternFit(ScatterFit):
 
     Arguments
     ---------
-    expected_width : float
-        Initial guess of beamwidth, saved as expected average width for checks
+    expected_width : real array, shape (2,), or float
+        Initial guess of beamwidth, saved as expected width for checks
     radius_first_null : float
         Radius of first null in beam in target coordinate units (stored here for
         convenience, but not calculated internally)
@@ -95,9 +95,9 @@ class BeamPatternFit(ScatterFit):
         self.width = sigma_to_fwhm(np.sqrt(self._interp.var))
         self.height = self._interp.height
 
-        self.expected_width = np.mean(width)
+        self.expected_width = width
         # Initial guess for radius of first null
-        self.radius_first_null = 1.3 * self.expected_width
+        self.radius_first_null = 1.3 * np.mean(self.expected_width)
         # Beam initially unrefined and invalid
         self.refined = 0
         self.is_valid = False
@@ -120,9 +120,15 @@ class BeamPatternFit(ScatterFit):
         self.center = self._interp.mean
         self.width = sigma_to_fwhm(np.sqrt(self._interp.var))
         self.height = self._interp.height
-        self.is_valid = not np.any(np.isnan(self.center)) and (self.height > 0.0) and \
-                        (np.min(self.width) > 0.9 * self.expected_width) and \
-                        (np.max(self.width) < 1.25 * self.expected_width)
+        self.is_valid = not np.any(np.isnan(self.center)) and (self.height > 0.0)
+        if np.isscalar(self.width):
+            self.is_valid = self.is_valid and (self.width > 0.9 * self.expected_width) and \
+                                              (self.width < 1.25 * self.expected_width)
+        else:
+            self.is_valid = self.is_valid and (self.width[0] > 0.9 * self.expected_width[0]) and \
+                                              (self.width[0] < 1.25 * self.expected_width[0]) and \
+                                              (self.width[1] > 0.9 * self.expected_width[1]) and \
+                                              (self.width[1] < 1.25 * self.expected_width[1])
 
     def __call__(self, x):
         """Evaluate function ``y = f(x)`` on new data.
@@ -158,8 +164,11 @@ def fit_beam_and_baselines(compscan, expected_width, dof, band=0):
     ----------
     compscan : :class:`compoundscan.CompoundScan` object
         Compound scan data used to fit beam and baselines
-    expected_width : float
-        Expected beamwidth based on antenna diameter, expressed as FWHM in radians
+    expected_width : sequence of 2 floats, or float
+        Expected beamwidth based on antenna diameter, expressed as FWHM in
+        radians. It allows for different widths in the two target coordinates.
+        If this is a single number, a circular beam will be fit, while two
+        numbers will result in an elliptical beam.
     dof : float
         Degrees of freedom of chi^2 distribution of total power samples
     band : int, optional
@@ -218,16 +227,17 @@ def fit_beam_and_baselines(compscan, expected_width, dof, band=0):
         # This threshold should be close to first nulls of beam - too wide compromises baseline fit
         outer = radius > beam.radius_first_null
         err_power = np.dot(resid, resid)
-        logger.debug("Iteration %d: residual = %f, beam height = %f, width = %f" %
-                     (n, (prev_err_power - err_power) / err_power, beam.height, beam.width))
+        logger.debug("Iteration %d: residual = %f, beam height = %f, width = %s, region size = %d" %
+                     (n, (prev_err_power - err_power) / err_power, beam.height, beam.width, np.sum(~outer)))
         if (err_power == 0.0) or (prev_err_power - err_power) / err_power < 1e-5:
             break
         prev_err_power = err_power + 0.0
 
-    # Find first null, by moving outward from beam center in radius range where null is expected
-    for null in np.arange(1.2, 1.8, 0.01) * beam.width:
-        inside_null = (radius > null - 0.2 * beam.width) & (radius <= null)
-        outside_null = (radius > null) & (radius <= null + 0.2 * beam.width)
+    # Find first beam null, by moving outward from beam center in radius range where null is expected
+    mean_beamwidth = np.mean(beam.width)
+    for null in np.arange(1.2, 1.8, 0.01) * mean_beamwidth:
+        inside_null = (radius > null - 0.2 * mean_beamwidth) & (radius <= null)
+        outside_null = (radius > null) & (radius <= null + 0.2 * mean_beamwidth)
         # Stop if end of scanned region is reached
         if (inside_null.sum() < 20) or (outside_null.sum() < 20):
             break
@@ -243,7 +253,7 @@ def fit_beam_and_baselines(compscan, expected_width, dof, band=0):
         for n, scan in enumerate(compscan.scans):
             # Identify regions close to first beam null within the current scan
             radius = np.sqrt(((scan.target_coords - beam.center[:, np.newaxis]) ** 2).sum(axis=0))
-            around_null = np.abs(radius - beam.radius_first_null) < 0.2 * beam.width
+            around_null = np.abs(radius - beam.radius_first_null) < 0.2 * mean_beamwidth
             padded_selection = np.array([False] + around_null.tolist() + [False])
             borders = np.diff(padded_selection).nonzero()[0] + 1
             # Discard scan if it doesn't contain two separate null regions (with beam area in between)
@@ -268,16 +278,15 @@ def fit_beam_and_baselines(compscan, expected_width, dof, band=0):
                 baseline.fit(scan.timestamps[around_null], scan_pol[n][around_null])
             baselines.append(baseline)
             # Identify inner region of beam (close to peak) within scan and add to list if any was found
-            inner = radius < 0.6 * beam.width
+            inner = radius < 0.6 * mean_beamwidth
             if inner.any():
                 good_scan_coords.append(scan.target_coords[:, inner])
                 good_scan_resid.append(bl_resid[inner])
         # Need at least 2 good scans, since fitting beam to single scan will introduce large errors in orthogonal dir
         if len(good_scan_resid) > 1:
             # Refit beam to inner region across all good scans
-            # Beam height is underestimated, as remove_spikes() flattens beam top - adjust it based on Gaussian beam
-            beam.fit(np.hstack(good_scan_coords).transpose(), 1.0047 * np.hstack(good_scan_resid))
-            logger.debug("Refinement: beam height = %f, width = %f, first null = %f, based on %d of %d scans" % \
+            beam.fit(np.hstack(good_scan_coords).transpose(), np.hstack(good_scan_resid))
+            logger.debug("Refinement: beam height = %f, width = %s, first null = %f, based on %d of %d scans" % \
                           (beam.height, beam.width, beam.radius_first_null, len(good_scan_resid), len(compscan.scans)))
             beam.refined = len(good_scan_resid)
 
@@ -285,10 +294,12 @@ def fit_beam_and_baselines(compscan, expected_width, dof, band=0):
     if (pol in ('Q', 'U', 'V')) or np.isnan(beam.center).any() or np.isnan(beam.width).any() or np.isnan(beam.height):
         beam = None
     else:
+        if np.isscalar(expected_width):
+            expected_width = [expected_width, expected_width]
         # If beam center is outside the box scanned out by the telescope, mark it as invalid (good idea to redo scans)
-        box_leeway = 0.1 * expected_width
-        scan_box = [target_coords[0].min() - box_leeway, target_coords[0].max() + box_leeway,
-                    target_coords[1].min() - box_leeway, target_coords[1].max() + box_leeway]
+        box_leeway = 0.1 * np.array(expected_width)
+        scan_box = [target_coords[0].min() - box_leeway[0], target_coords[0].max() + box_leeway[0],
+                    target_coords[1].min() - box_leeway[1], target_coords[1].max() + box_leeway[1]]
         if (beam.center[0] < scan_box[0]) or (beam.center[0] > scan_box[1]) or \
            (beam.center[1] < scan_box[2]) or (beam.center[1] > scan_box[3]):
             beam.is_valid = False
@@ -297,14 +308,14 @@ def fit_beam_and_baselines(compscan, expected_width, dof, band=0):
         # otherwise the baseline won't be accurate
         for scan in compscan.scans:
             scan_limits = scan.target_coords[0].min(), scan.target_coords[0].max()
-            if (scan_limits[1] - scan_limits[0] > 2.5 * expected_width) and \
-               ((beam.center[0] < scan_limits[0] + expected_width) or \
-                (beam.center[0] > scan_limits[1] - expected_width)):
+            if (scan_limits[1] - scan_limits[0] > 2.5 * expected_width[0]) and \
+               ((beam.center[0] < scan_limits[0] + expected_width[0]) or \
+                (beam.center[0] > scan_limits[1] - expected_width[0])):
                 beam.is_valid = False
             scan_limits = scan.target_coords[1].min(), scan.target_coords[1].max()
-            if (scan_limits[1] - scan_limits[0] > 2.5 * expected_width) and \
-               ((beam.center[1] < scan_limits[0] + expected_width) or \
-                (beam.center[1] > scan_limits[1] - expected_width)):
+            if (scan_limits[1] - scan_limits[0] > 2.5 * expected_width[1]) and \
+               ((beam.center[1] < scan_limits[0] + expected_width[1]) or \
+                (beam.center[1] > scan_limits[1] - expected_width[1])):
                 beam.is_valid = False
     return beam, baselines, initial_baseline
 
