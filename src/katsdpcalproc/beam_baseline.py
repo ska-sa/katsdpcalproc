@@ -89,7 +89,7 @@ class BeamPatternFit(ScatterFit):
     def __init__(self, center, width, height):
         ScatterFit.__init__(self)
         if not np.isscalar(width):
-            width = np.atleast_1d(np.asarray(width))
+            width = np.atleast_1d(width)
         self._interp = GaussianFit(center, fwhm_to_sigma(width) ** 2.0, height)
         self.center = self._interp.mean
         self.width = sigma_to_fwhm(np.sqrt(self._interp.var))
@@ -110,9 +110,9 @@ class BeamPatternFit(ScatterFit):
 
         Parameters
         ----------
-        x : array, shape (N, 2)
-            Sequence of 2-dimensional target coordinates
-        y : array, shape (N,)
+        x : array-like, shape (2, N)
+            Sequence of 2-dimensional target coordinates (as column vectors)
+        y : array-like, shape (N,)
             Sequence of corresponding total power values to fit
 
         """
@@ -131,17 +131,17 @@ class BeamPatternFit(ScatterFit):
                                               (self.width[1] < 1.25 * self.expected_width[1])
 
     def __call__(self, x):
-        """Evaluate function ``y = f(x)`` on new data.
+        """Evaluate fitted beam pattern function on new target coordinates.
 
         Parameters
         ----------
-        x : array, shape (M, 2)
-            Sequence of 2-dimensional target coordinates
+        x : array-like, shape (2, M)
+            Sequence of 2-dimensional target coordinates (as column vectors)
 
         Returns
         -------
         y : array, shape (M,)
-            Sequence of total power values representing fitted beam plus baseline
+            Sequence of total power values representing fitted beam
 
         """
         return self._interp(x)
@@ -221,11 +221,13 @@ def fit_beam_and_baselines(compscan, expected_width, dof, band=0):
         peak_pos = target_coords[:, peak_ind]
         peak_val = bl_resid[peak_ind]
         beam = BeamPatternFit(peak_pos, expected_width, peak_val)
-        beam.fit(target_coords.transpose(), bl_resid)
-        resid = bl_resid - beam(target_coords.transpose())
+        beam.fit(target_coords, bl_resid)
+        # Calculate Euclidean distance from beam center and identify new "outer" region
         radius = np.sqrt(((target_coords - beam.center[:, np.newaxis]) ** 2).sum(axis=0))
         # This threshold should be close to first nulls of beam - too wide compromises baseline fit
         outer = radius > beam.radius_first_null
+        # Check if error remaining after baseline and beam fit has converged, and stop if it has
+        resid = bl_resid - beam(target_coords)
         err_power = np.dot(resid, resid)
         logger.debug("Iteration %d: residual = %f, beam height = %f, width = %s, region size = %d" %
                      (n, (prev_err_power - err_power) / err_power, beam.height, beam.width, np.sum(~outer)))
@@ -285,13 +287,18 @@ def fit_beam_and_baselines(compscan, expected_width, dof, band=0):
         # Need at least 2 good scans, since fitting beam to single scan will introduce large errors in orthogonal dir
         if len(good_scan_resid) > 1:
             # Refit beam to inner region across all good scans
-            beam.fit(np.hstack(good_scan_coords).transpose(), np.hstack(good_scan_resid))
+            beam.fit(np.hstack(good_scan_coords), np.hstack(good_scan_resid))
             logger.debug("Refinement: beam height = %f, width = %s, first null = %f, based on %d of %d scans" % \
                           (beam.height, beam.width, beam.radius_first_null, len(good_scan_resid), len(compscan.scans)))
             beam.refined = len(good_scan_resid)
 
-    # Do final validation of beam fit (also discard beam for non-positive pols)
-    if (pol in ('Q', 'U', 'V')) or np.isnan(beam.center).any() or np.isnan(beam.width).any() or np.isnan(beam.height):
+    # Attempt to fit initial beam in non-positive pol term (might be a silly idea)
+    if pol in ('Q', 'U', 'V') and not refine_beam:
+        bl_resid = compscan_pol - initial_baseline(target_coords)
+        beam.fit(target_coords, bl_resid)
+
+    # Do final validation of beam fit
+    if np.isnan(beam.center).any() or np.isnan(beam.width).any() or np.isnan(beam.height):
         beam = None
     else:
         if np.isscalar(expected_width):
