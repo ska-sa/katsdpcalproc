@@ -96,9 +96,9 @@ class BeamPatternFit(ScatterFit):
         ScatterFit.__init__(self)
         if not np.isscalar(width):
             width = np.atleast_1d(width)
-        self._interp = GaussianFit(center, fwhm_to_sigma(width) ** 2.0, height)
+        self._interp = GaussianFit(center, fwhm_to_sigma(width), height)
         self.center = self._interp.mean
-        self.width = sigma_to_fwhm(np.sqrt(self._interp.var))
+        self.width = sigma_to_fwhm(self._interp.std)
         self.height = self._interp.height
 
         self.expected_width = width
@@ -125,7 +125,7 @@ class BeamPatternFit(ScatterFit):
         """
         self._interp.fit(x, y)
         self.center = self._interp.mean
-        self.width = sigma_to_fwhm(np.sqrt(self._interp.var))
+        self.width = sigma_to_fwhm(self._interp.std)
         self.height = self._interp.height
         self.is_valid = not np.any(np.isnan(self.center)) and (self.height > 0.0)
         ##POTENTIAL TWEAK##
