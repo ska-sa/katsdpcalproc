@@ -109,6 +109,28 @@ ax.legend(lines + crline,
 ax.set_xlabel('Calibrator flux (Jy)')
 ax.set_ylabel('Frequency standard deviation relative to 1/N')
 ax.set_title('Frequency (delay) estimator performance')
-fig.savefig('lightning_20160317_ludwig.pdf')
+fig.savefig('delay_estm_vs_flux.pdf')
+
+log_sizes = np.arange(7, 14)
+snr = np.empty(len(log_sizes))
+res = np.empty(len(log_sizes))
+stdevs = np.empty((len(log_sizes), 6))
+for n, log_size in enumerate(log_sizes):
+    N = 2 ** log_size
+    snr[n], res[n], stdevs[n] = experiment(dump_period=2.0 * N / 4096, channels=N)
+scaled_std = np.dot(np.diag(1.0 / res), stdevs)
+
+fig, ax = plt.subplots(figsize=(8, 6))
+crline = ax.semilogy(log_sizes, scaled_std[:, 0], 'k--', marker='o')
+lines = ax.semilogy(log_sizes, scaled_std[:, 1:], marker='.')
+ax.xaxis.set_ticks(log_sizes)
+ax.xaxis.set_ticklabels(['{:g}'.format(2 ** ls) for ls in log_sizes])
+ax.set_xlim(log_sizes[0], log_sizes[-1])
+ax.legend(lines + crline,
+          ('Ludwig', 'Laura', 'Lindsay', 'SKA', 'Secant', 'Best (CRLB)'))
+ax.set_xlabel('Number of samples (N)')
+ax.set_ylabel('Frequency standard deviation relative to 1/N')
+ax.set_title('Frequency (delay) estimator performance')
+fig.savefig('delay_estm_vs_N.pdf')
 
 plt.show()
