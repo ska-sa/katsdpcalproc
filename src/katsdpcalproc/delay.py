@@ -1,3 +1,10 @@
+#
+# Delay estimator comparison for lightning talk.
+#
+# Ludwig Schwardt
+# 16 March 2016
+#
+
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -19,7 +26,7 @@ def experiment(flux=10., SEFD=400., dump_period=2.0, channels=4096,
     noise = np.random.randn(K, N) + 1j * np.random.randn(K, N)
     crlb = 6.0 / (SNR * N * (N * N - 1.0))
 
-    n = np.arange(N, dtype=np.float)
+    n = np.arange(N, dtype=float)
     angle = np.outer(n, freq) + phase
     x = ampl * np.exp(1j * angle.T) + np.sqrt(noise_var / 2) * noise
     # x = x / np.abs(x)
@@ -86,15 +93,17 @@ snr = np.empty_like(fluxes)
 res = np.empty_like(fluxes)
 stdevs = np.empty((len(fluxes), 6))
 for n, flux in enumerate(fluxes):
-    snr[n], res[n], stdevs[n] = experiment(flux)
+    snr[n], res[n], stdevs[n] = experiment(flux=flux)
 scaled_std = np.dot(np.diag(1.0 / res), stdevs)
 
 sns.set_context("talk")
 fig, ax = plt.subplots(figsize=(8, 6))
-crline = ax.semilogy(np.log10(fluxes), scaled_std[:, 0], 'k--')
-lines = ax.semilogy(np.log10(fluxes), scaled_std[:, 1:])
-logflux = ax.xaxis.get_ticklocs()
-ax.xaxis.set_ticklabels(['{:.1f}'.format(10 ** lf) for lf in logflux])
+log_fluxes = np.log10(fluxes)
+crline = ax.semilogy(log_fluxes, scaled_std[:, 0], 'k--', marker='o')
+lines = ax.semilogy(log_fluxes, scaled_std[:, 1:], marker='.')
+ax.xaxis.set_ticks(log_fluxes)
+ax.xaxis.set_ticklabels(['{:g}'.format(fl) for fl in fluxes])
+ax.set_xlim(log_fluxes[0], log_fluxes[-1])
 ax.legend(lines + crline,
           ('Ludwig', 'Laura', 'Lindsay', 'SKA', 'Secant', 'Best (CRLB)'))
 ax.set_xlabel('Calibrator flux (Jy)')
