@@ -12,6 +12,7 @@ from katsdpcalproc.delay import (mean_phase_diff, fft_coarse, fft_quadratic,
                               fft_leastsq, fft_secant)
 
 
+FLUX = 10.
 DUMP_PERIOD = 2.0
 CHANNELS = 4096
 
@@ -20,7 +21,7 @@ def _wrap_angle(th):
     return (th + np.pi) % (2. * np.pi) - np.pi
 
 
-def experiment(flux=10., SEFD=400., dump_period=DUMP_PERIOD, channels=CHANNELS,
+def experiment(flux=FLUX, SEFD=400., dump_period=DUMP_PERIOD, channels=CHANNELS,
                sample_rate=1712e6, repeats=1000, fft_factor=2, window=None):
     N, K, ampl = channels, repeats, flux
 
@@ -64,46 +65,43 @@ def experiment(flux=10., SEFD=400., dump_period=DUMP_PERIOD, channels=CHANNELS,
     stdevs = [np.sqrt(crlb)]
     for freq_estm in [cmpd, fft_lsq, fft, fft_quad, fft_sec]:
         stdevs.append(_wrap_angle(freq_estm - freq).std())
-    res = 2 * np.pi / N
+    # Convert from frequency in radians to delay in seconds
+    res = (2 * np.pi * sample_rate) / (2 * N)
     return np.array(stdevs) / res
 
 
-fluxes = np.array([0.1, 0.2, 0.5, 1., 2., 5., 10., 20., 50., 100.])
-scaled_std = np.empty((len(fluxes), 6))
-for n, flux in enumerate(fluxes):
-    scaled_std[n] = experiment(flux=flux)
+def plot_loglog(x, y):
+    fig, ax = plt.subplots(figsize=(8, 6))
+    log_x = np.log10(x)
+    crline = ax.semilogy(log_x, y[:, 0], 'k--', marker='o')
+    lines = ax.semilogy(log_x, y[:, 1:], marker='.')
+    ax.xaxis.set_ticks(log_x)
+    ax.xaxis.set_ticklabels(['{:g}'.format(fl) for fl in x])
+    ax.set_xlim(log_x[0], log_x[-1])
+    ax.grid(axis='y')
+    ax.legend(lines + crline,
+              ('Ludwig', 'Laura', 'Lindsay', 'SKA', 'Secant', 'Best (CRB)'))
+    ax.set_ylabel('Delay standard deviation [s]')
+    return fig, ax
 
-fig, ax = plt.subplots(figsize=(8, 6))
-log_fluxes = np.log10(fluxes)
-crline = ax.semilogy(log_fluxes, scaled_std[:, 0], 'k--', marker='o')
-lines = ax.semilogy(log_fluxes, scaled_std[:, 1:], marker='.')
-ax.xaxis.set_ticks(log_fluxes)
-ax.xaxis.set_ticklabels(['{:g}'.format(fl) for fl in fluxes])
-ax.set_xlim(log_fluxes[0], log_fluxes[-1])
-ax.legend(lines + crline,
-          ('Ludwig', 'Laura', 'Lindsay', 'SKA', 'Secant', 'Best (CRLB)'))
-ax.set_xlabel('Calibrator flux (Jy)')
-ax.set_ylabel('Frequency standard deviation relative to 1/N')
-ax.set_title('Frequency (delay) estimator performance')
+
+fluxes = np.array([0.1, 0.2, 0.5, 1., 2., 5., 10., 20., 50., 100.])
+delay_std = np.empty((len(fluxes), 6))
+for n, flux in enumerate(fluxes):
+    delay_std[n] = experiment(flux=flux)
+fig, ax = plot_loglog(fluxes, delay_std)
+ax.set_xlabel('Calibrator flux [Jy]')
+ax.set_title(f'Delay estimator performance vs flux (N={CHANNELS})')
 fig.savefig('delay_estm_vs_flux.png')
 
 log_sizes = np.arange(7, 14)
-scaled_std = np.empty((len(log_sizes), 6))
+delay_std = np.empty((len(log_sizes), 6))
 for n, log_size in enumerate(log_sizes):
     N = 2 ** log_size
-    scaled_std[n] = experiment(dump_period=DUMP_PERIOD * N / CHANNELS, channels=N)
-
-fig, ax = plt.subplots(figsize=(8, 6))
-crline = ax.semilogy(log_sizes, scaled_std[:, 0], 'k--', marker='o')
-lines = ax.semilogy(log_sizes, scaled_std[:, 1:], marker='.')
-ax.xaxis.set_ticks(log_sizes)
-ax.xaxis.set_ticklabels(['{:g}'.format(2 ** ls) for ls in log_sizes])
-ax.set_xlim(log_sizes[0], log_sizes[-1])
-ax.legend(lines + crline,
-          ('Ludwig', 'Laura', 'Lindsay', 'SKA', 'Secant', 'Best (CRLB)'))
+    delay_std[n] = experiment(dump_period=DUMP_PERIOD * N / CHANNELS, channels=N)
+fig, ax = plot_loglog(2 ** log_sizes, delay_std)
 ax.set_xlabel('Number of samples (N)')
-ax.set_ylabel('Frequency standard deviation relative to 1/N')
-ax.set_title('Frequency (delay) estimator performance')
+ax.set_title(f'Delay estimator performance vs N (flux={FLUX})')
 fig.savefig('delay_estm_vs_N.png')
 
 t = np.arange(CHANNELS) / CHANNELS
@@ -124,22 +122,12 @@ for n, (b, e) in enumerate(zip(segm_start, segm_end)):
 gain *= gate
 
 fluxes = np.array([0.1, 0.2, 0.5, 1., 2., 5., 10., 20., 50., 100.])
-scaled_std = np.empty((len(fluxes), 6))
+delay_std = np.empty((len(fluxes), 6))
 for n, flux in enumerate(fluxes):
-    scaled_std[n] = experiment(flux=flux, SEFD=sefd, window=gain)
-
-fig, ax = plt.subplots(figsize=(8, 6))
-log_fluxes = np.log10(fluxes)
-crline = ax.semilogy(log_fluxes, scaled_std[:, 0], 'k--', marker='o')
-lines = ax.semilogy(log_fluxes, scaled_std[:, 1:], marker='.')
-ax.xaxis.set_ticks(log_fluxes)
-ax.xaxis.set_ticklabels(['{:g}'.format(fl) for fl in fluxes])
-ax.set_xlim(log_fluxes[0], log_fluxes[-1])
-ax.legend(lines + crline,
-          ('Ludwig', 'Laura', 'Lindsay', 'SKA', 'Secant', 'Best (CRLB)'))
-ax.set_xlabel('Calibrator flux (Jy)')
-ax.set_ylabel('Frequency standard deviation relative to 1/N')
-ax.set_title('Frequency (delay) estimator performance')
+    delay_std[n] = experiment(flux=flux, SEFD=sefd, window=gain)
+fig, ax = plot_loglog(fluxes, delay_std)
+ax.set_xlabel('Calibrator flux [Jy]')
+ax.set_title(f'Realistic delay estimator performance (N={CHANNELS})')
 fig.savefig('delay_estm_realistic.png')
 
 plt.show()
