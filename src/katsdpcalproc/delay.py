@@ -63,7 +63,8 @@ def fft_leastsq(x, NFFT=None):
     fft = fft_coarse(x, NFFT)
     n = np.arange(N, dtype=float)
     angle_post_fft = np.angle(x * np.exp(-1j * np.outer(fft, n)))
-    norm_n = (n - n.mean()) / np.dot(n - n.mean(), n - n.mean())
+    centred_n = n - n.mean()
+    norm_n = centred_n / np.dot(centred_n, centred_n)
     y = np.unwrap(angle_post_fft)
     leastsq_slope = np.dot(norm_n, y.T - y.mean(axis=-1))
     return fft + leastsq_slope
