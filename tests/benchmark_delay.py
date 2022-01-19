@@ -7,21 +7,27 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 from katsdpcalproc.delay import (mean_phase_diff, fft_coarse, fft_quadratic,
                               fft_leastsq, fft_secant)
 
 
-def experiment(flux=10., SEFD=400., dump_period=2.0, channels=4096,
-               sample_rate=1712e6, repeats=1000, fft_factor=2):
+DUMP_PERIOD = 2.0
+CHANNELS = 4096
+
+
+def _wrap_angle(th):
+    return (th + np.pi) % (2. * np.pi) - np.pi
+
+
+def experiment(flux=10., SEFD=400., dump_period=DUMP_PERIOD, channels=CHANNELS,
+               sample_rate=1712e6, repeats=1000, fft_factor=2, window=None):
     N, K, ampl = channels, repeats, flux
 
     NFFT = fft_factor * N
     samples = dump_period * sample_rate / (2 * N)
     noise_var = 2 * SEFD * SEFD / samples
     SNR = ampl * ampl / noise_var
-    SNR_dB = 10.0 * np.log10(SNR)
 
     freq = 2. * np.pi * (np.random.rand(K) - 0.5)
     freq = 0.99 * freq
@@ -44,22 +50,17 @@ def experiment(flux=10., SEFD=400., dump_period=2.0, channels=4096,
     # FFT (secant)
     fft_sec = fft_secant(x, NFFT)
     # Collect standard deviations
-    wrap_angle = lambda th: (th + np.pi) % (2. * np.pi) - np.pi
     stdevs = [np.sqrt(crlb)]
     for freq_estm in [cmpd, fft_lsq, fft, fft_quad, fft_sec]:
-        stdevs.append(wrap_angle(freq_estm - freq).std())
-    return SNR_dB, 2 * np.pi / N, stdevs
+        stdevs.append(_wrap_angle(freq_estm - freq).std())
+    res = 2 * np.pi / N
+    return np.array(stdevs) / res
 
 
 fluxes = np.array([0.1, 0.2, 0.5, 1., 2., 5., 10., 20., 50., 100.])
-snr = np.empty_like(fluxes)
-res = np.empty_like(fluxes)
-stdevs = np.empty((len(fluxes), 6))
+scaled_std = np.empty((len(fluxes), 6))
 for n, flux in enumerate(fluxes):
-    snr[n], res[n], stdevs[n] = experiment(flux=flux)
-scaled_std = np.dot(np.diag(1.0 / res), stdevs)
-
-sns.set_context("talk")
+    scaled_std[n] = experiment(flux=flux)
 
 fig, ax = plt.subplots(figsize=(8, 6))
 log_fluxes = np.log10(fluxes)
@@ -73,16 +74,13 @@ ax.legend(lines + crline,
 ax.set_xlabel('Calibrator flux (Jy)')
 ax.set_ylabel('Frequency standard deviation relative to 1/N')
 ax.set_title('Frequency (delay) estimator performance')
-fig.savefig('delay_estm_vs_flux.pdf')
+fig.savefig('delay_estm_vs_flux.png')
 
 log_sizes = np.arange(7, 14)
-snr = np.empty(len(log_sizes))
-res = np.empty(len(log_sizes))
-stdevs = np.empty((len(log_sizes), 6))
+scaled_std = np.empty((len(log_sizes), 6))
 for n, log_size in enumerate(log_sizes):
     N = 2 ** log_size
-    snr[n], res[n], stdevs[n] = experiment(dump_period=2.0 * N / 4096, channels=N)
-scaled_std = np.dot(np.diag(1.0 / res), stdevs)
+    scaled_std[n] = experiment(dump_period=DUMP_PERIOD * N / CHANNELS, channels=N)
 
 fig, ax = plt.subplots(figsize=(8, 6))
 crline = ax.semilogy(log_sizes, scaled_std[:, 0], 'k--', marker='o')
