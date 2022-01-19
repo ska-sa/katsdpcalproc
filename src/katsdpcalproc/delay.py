@@ -57,7 +57,8 @@ def fft_quadratic(x, NFFT=None):
 
 def fft_leastsq(x, NFFT=None):
     """FFT (linear regression)."""
-    N = np.shape(x)[-1]
+    assert np.ndim(x) > 1
+    N = x.shape[-1]
     if NFFT is None:
         NFFT = N
     fft = fft_coarse(x, NFFT)
@@ -65,8 +66,11 @@ def fft_leastsq(x, NFFT=None):
     angle_post_fft = np.angle(x * np.exp(-1j * np.outer(fft, n)))
     centred_n = n - n.mean()
     norm_n = centred_n / np.dot(centred_n, centred_n)
-    y = np.unwrap(angle_post_fft)
-    leastsq_slope = np.dot(norm_n, y.T - y.mean(axis=-1))
+    leastsq_slope = np.zeros_like(fft)
+    for k in range(x.shape[0]):
+        valid = np.abs(x[k]) > 0
+        y = np.unwrap(angle_post_fft[k, valid])
+        leastsq_slope[k] = np.dot(norm_n[valid], y.T - y.mean(axis=-1))
     return fft + leastsq_slope
 
 
