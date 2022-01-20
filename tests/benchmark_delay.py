@@ -15,6 +15,7 @@ from katsdpcalproc.delay import (mean_phase_diff, fft_coarse, fft_quadratic,
 FLUX = 10.
 DUMP_PERIOD = 2.0
 CHANNELS = 4096
+SAMPLE_RATE = 1712e6
 
 
 def _wrap_angle(th):
@@ -22,16 +23,19 @@ def _wrap_angle(th):
 
 
 def experiment(flux=FLUX, SEFD=400., dump_period=DUMP_PERIOD, channels=CHANNELS,
-               sample_rate=1712e6, repeats=1000, fft_factor=2, window=None):
+               sample_rate=SAMPLE_RATE, repeats=1000, fft_factor=2, window=None,
+               chan_range=slice(None), delay_limit=None):
     N, K, ampl = channels, repeats, flux
 
     NFFT = fft_factor * N
     samples = dump_period * sample_rate / (2 * N)
     noise_var = 2 * SEFD * SEFD / samples
     SNR = ampl * ampl / noise_var
+    delay_alias = 2 * N / sample_rate
 
-    freq = 2. * np.pi * (np.random.rand(K) - 0.5)
-    freq = 0.99 * freq
+    # FFT+secant method does not like frequencies around +- pi
+    freq_scale = 0.99 if delay_limit is None else delay_limit / delay_alias
+    freq = 2. * np.pi * (np.random.rand(K) - 0.5) * freq_scale
     phase = 2. * np.pi * np.random.rand(K)
     noise = np.random.randn(K, N) + 1j * np.random.randn(K, N)
     if window is None:
@@ -52,7 +56,7 @@ def experiment(flux=FLUX, SEFD=400., dump_period=DUMP_PERIOD, channels=CHANNELS,
         x *= np.atleast_2d(window)
 
     # Circular mean of phase difference
-    cmpd = mean_phase_diff(x)
+    cmpd = mean_phase_diff(x[:, chan_range])
     # FFT (no interpolation)
     fft = fft_coarse(x, NFFT)
     # FFT (quadratic interpolation)
@@ -66,8 +70,7 @@ def experiment(flux=FLUX, SEFD=400., dump_period=DUMP_PERIOD, channels=CHANNELS,
     for freq_estm in [cmpd, fft_lsq, fft, fft_quad, fft_sec]:
         stdevs.append(_wrap_angle(freq_estm - freq).std())
     # Convert from frequency in radians to delay in seconds
-    res = (2 * np.pi * sample_rate) / (2 * N)
-    return np.array(stdevs) / res
+    return np.array(stdevs) * delay_alias / (2 * np.pi)
 
 
 def plot_loglog(x, y):
@@ -105,7 +108,7 @@ ax.set_title(f'Delay estimator performance vs N (flux={FLUX})')
 fig.savefig('delay_estm_vs_N.png')
 
 t = np.arange(CHANNELS) / CHANNELS
-flux = 16 * np.exp(-0.65 * np.log(t + 1))
+flux_shape = 1.6 * np.exp(-0.65 * np.log(t + 1))
 sefd = 500 * np.exp(-0.3 * np.log(t + 1))
 gain = np.full_like(t, 0.01)
 for harmonic in range(1, 11, 2):
@@ -118,13 +121,16 @@ gate_scale = int(CHANNELS / gate_transitions[-1])
 segm_start = gate_transitions[:-1]
 segm_end = gate_transitions[1:]
 for n, (b, e) in enumerate(zip(segm_start, segm_end)):
-    gate[gate_scale * b : gate_scale * e] = float(n % 2 == 1)
+    segment = slice(gate_scale * b, gate_scale * e)
+    gate[segment] = float(n % 2 == 1)
 gain *= gate
+chan_range = slice(681 * gate_scale, 792 * gate_scale)
 
 fluxes = np.array([0.1, 0.2, 0.5, 1., 2., 5., 10., 20., 50., 100.])
 delay_std = np.empty((len(fluxes), 6))
 for n, flux in enumerate(fluxes):
-    delay_std[n] = experiment(flux=flux, SEFD=sefd, window=gain)
+    delay_std[n] = experiment(flux=flux * flux_shape, SEFD=sefd, window=gain,
+                              chan_range=chan_range, delay_limit=10 / SAMPLE_RATE)
 fig, ax = plot_loglog(fluxes, delay_std)
 ax.set_xlabel('Calibrator flux [Jy]')
 ax.set_title(f'Realistic delay estimator performance (N={CHANNELS})')
