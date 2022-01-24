@@ -115,8 +115,8 @@ for harmonic in range(1, 11, 2):
     gain += np.sin(2 * np.pi * t * harmonic / 2) / harmonic
 gain /= np.median(gain)
 gate = np.zeros_like(t)
-gate_transitions = [0, 50, 81, 86, 93, 135, 190, 203, 279, 282, 338,
-                    536, 657, 681, 793, 901, 910, 926, 955, 968, 972, 1024]
+gate_transitions = [0, 1, 49, 50, 81, 86, 93, 135, 190, 203, 279, 282, 338, 536,
+                    657, 681, 793, 901, 910, 926, 955, 968, 972, 973, 1023, 1024]
 gate_scale = int(CHANNELS / gate_transitions[-1])
 segm_start = gate_transitions[:-1]
 segm_end = gate_transitions[1:]
