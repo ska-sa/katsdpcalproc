@@ -84,6 +84,17 @@ def _deriv(f, x):
     return 2 * (X * dX.conj()).real
 
 
+def _deriv_fast(f, x, n, temp):
+    temp.real = 0.0
+    np.outer(-f, n, temp.imag)
+    np.exp(temp, temp)
+    temp *= x
+    X = temp.mean(axis=-1)
+    temp *= -1j * n
+    dX = temp.mean(axis=-1)
+    return 2 * (X * dX.conj()).real
+
+
 def _secant(x, left, right, epsilon):
     delta = np.ones_like(left)
     done = delta < epsilon
@@ -103,10 +114,33 @@ def _secant(x, left, right, epsilon):
     return f_new
 
 
+def _secant_fast(x, left, right, epsilon):
+    delta = np.ones_like(left)
+    done = delta < epsilon
+    N = np.shape(x)[-1]
+    n = np.arange(N, dtype=float)
+    temp = np.empty(x.shape, dtype=np.complex128)
+    f_old, f_new = left, right
+    d_old = _deriv_fast(f_old, x, n, temp)
+    d_new = _deriv_fast(f_new, x, n, temp)
+    iter = 0
+    while not np.all(done):
+        iter += 1
+        with np.errstate(divide='ignore', invalid='ignore'):
+            delta = d_new * (f_new - f_old) / (d_new - d_old)
+        delta[~np.isfinite(delta) | done] = 0.
+        done = np.abs(delta) < epsilon
+        f_old, d_old = f_new, d_new
+        f_new = f_old - delta
+        d_new = _deriv_fast(f_new, x, n, temp)
+        # print iter, (delta == 0.).sum(), np.abs(delta).max()
+    return f_new
+
+
 def fft_secant(x, NFFT=None):
     if NFFT is None:
         NFFT = np.shape(x)[-1]
     _, fft_peak = _fft_abs_peak(x, NFFT)
     left = _index_to_freq(fft_peak - 0.5, NFFT)
     right = _index_to_freq(fft_peak + 0.5, NFFT)
-    return _secant(x, left, right, epsilon=1e-10)
+    return _secant_fast(x, left, right, epsilon=1e-10)
