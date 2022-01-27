@@ -139,9 +139,15 @@ def _secant_fast(x, left, right, epsilon):
 
 
 def fft_secant(x, NFFT=None):
+    front_shape = x.shape[:x.ndim - 1]
+    if front_shape != ():
+        x = x.reshape(-1, x.shape[-1])
     if NFFT is None:
         NFFT = np.shape(x)[-1]
     _, fft_peak = _fft_abs_peak(x, NFFT)
     left = _index_to_freq(fft_peak - 0.5, NFFT)
     right = _index_to_freq(fft_peak + 0.5, NFFT)
-    return _secant_fast(x, left, right, epsilon=1e-10)
+    freq = _secant_fast(x, left, right, epsilon=1e-10)
+    if front_shape != ():
+        freq = freq.reshape(front_shape)
+    return freq
