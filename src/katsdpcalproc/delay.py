@@ -114,31 +114,36 @@ def _secant(x, left, right, epsilon):
     return f_new
 
 
-def _secant_fast(x, left, right, epsilon):
+def _secant_fast(x, left, right, epsilon, max_iters, discard_unconverged):
     delta = np.ones_like(left)
     active = delta >= epsilon
     N = np.shape(x)[-1]
     n = np.arange(N, dtype=float)
     temp = np.empty(x.shape, dtype=np.complex128)
-    f_old, f_new = left, right
+    f_old = left.copy()
+    f_new = right.copy()
     d_old = _deriv_fast(f_old, x, n, temp)
     d_new = _deriv_fast(f_new, x, n, temp)
     iteration = 0
-    while np.any(active) and iteration < 100:
+    while np.any(active) and iteration < max_iters:
         iteration += 1
         with np.errstate(divide='ignore', invalid='ignore'):
             delta = d_new * (f_new - f_old) / (d_new - d_old)
-        delta[~np.isfinite(delta) | ~active] = 0.
-        active = np.abs(delta) >= epsilon
-        f_old = f_new
+        delta[np.isnan(delta)] = 0.0
+        active = ~np.isinf(delta) & (np.abs(delta) >= epsilon)
+        f_old[:] = f_new
         d_old[:] = d_new
-        f_new = f_old - delta
+        f_new[active] = f_old[active] - delta[active]
         d_new[active] = _deriv_fast(f_new[active], x[active], n, temp[:sum(active)])
         # print(iteration, (delta == 0.).sum(), np.abs(delta).max())
+    if discard_unconverged:
+        unconverged = np.isinf(delta) | active
+        f_new[unconverged] = np.nan
     return f_new
 
 
-def fft_secant(x, NFFT=None):
+def fft_secant(x, NFFT=None, epsilon=1e-10, max_iters=100,
+               discard_unconverged=False):
     front_shape = x.shape[:x.ndim - 1]
     if front_shape != ():
         x = x.reshape(-1, x.shape[-1])
@@ -147,7 +152,7 @@ def fft_secant(x, NFFT=None):
     _, fft_peak = _fft_abs_peak(x, NFFT)
     left = _index_to_freq(fft_peak - 0.5, NFFT)
     right = _index_to_freq(fft_peak + 0.5, NFFT)
-    freq = _secant_fast(x, left, right, epsilon=1e-10)
+    freq = _secant_fast(x, left, right, epsilon, max_iters, discard_unconverged)
     if front_shape != ():
         freq = freq.reshape(front_shape)
     return freq
