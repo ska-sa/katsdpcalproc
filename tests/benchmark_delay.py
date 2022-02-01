@@ -38,18 +38,19 @@ def experiment(flux=FLUX, SEFD=400., dump_period=DUMP_PERIOD, channels=CHANNELS,
     freq = 2. * np.pi * (np.random.rand(K) - 0.5) * freq_scale
     phase = 2. * np.pi * np.random.rand(K)
     noise = np.random.randn(K, N) + 1j * np.random.randn(K, N)
+    n = np.arange(N, dtype=float)
+
     if window is None:
         SNR_sum = SNR * N
-        N_range = N
+        curvature = (N * N - 1.0) / 12.0
     else:
-        gate = np.nonzero(window)[0]
-        SNR_eff = np.zeros_like(SNR)
-        SNR_eff[gate] = SNR[gate]
-        SNR_sum = np.sum(SNR_eff)
-        N_range = gate[-1] - gate[0] + 1
-    crlb = 6.0 / (SNR_sum * (N_range * N_range - 1.0))
+        gate = window.nonzero()[0]
+        weights = window / np.sum(window)
+        SNR_sum = SNR @ weights * len(gate)
+        centroid = weights @ n
+        curvature = weights @ (n - centroid) ** 2
+    crlb = 0.5 / (SNR_sum * curvature)
 
-    n = np.arange(N, dtype=float)
     angle = np.outer(n, freq) + phase
     x = ampl * np.exp(1j * angle.T) + np.sqrt(noise_var / 2) * noise
     if window is not None:
