@@ -65,11 +65,11 @@ def experiment(flux=FLUX, SEFD=400., dump_period=DUMP_PERIOD, channels=CHANNELS,
     # FFT (linear regression)
     fft_lsq = fft_leastsq(x, NFFT)
     # FFT (secant)
-    fft_sec = fft_secant(x, NFFT)
+    fft_sec = fft_secant(x, NFFT, discard_unconverged=True)
     # Collect standard deviations
     stdevs = [np.sqrt(crlb)]
     for freq_estm in [cmpd, fft_lsq, fft, fft_quad, fft_sec]:
-        stdevs.append(_wrap_angle(freq_estm - freq).std())
+        stdevs.append(np.nanstd(_wrap_angle(freq_estm - freq)))
     # Convert from frequency in radians to delay in seconds
     return np.array(stdevs) * delay_alias / (2 * np.pi)
 
