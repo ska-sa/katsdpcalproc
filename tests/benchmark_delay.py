@@ -28,10 +28,12 @@ def experiment(flux=FLUX, SEFD=400., dump_period=DUMP_PERIOD, channels=CHANNELS,
     N, K, ampl = channels, repeats, flux
 
     NFFT = fft_factor * N
-    samples = dump_period * sample_rate / (2 * N)
+    bandwidth = sample_rate / 2
+    channel_width = bandwidth / N
+    delay_alias = 1 / channel_width
+    samples = dump_period / delay_alias
     noise_var = 2 * SEFD * SEFD / samples
     SNR = ampl * ampl / noise_var
-    delay_alias = 2 * N / sample_rate
 
     # FFT+secant method does not like frequencies around +- pi
     freq_scale = 0.99 if delay_limit is None else delay_limit / delay_alias
