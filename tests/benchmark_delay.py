@@ -24,7 +24,7 @@ def _wrap_angle(th):
 
 def experiment(flux=FLUX, SEFD=400., dump_period=DUMP_PERIOD, channels=CHANNELS,
                sample_rate=SAMPLE_RATE, repeats=1000, fft_factor=2, window=None,
-               chan_range=slice(None), delay_limit=None):
+               chan_range=slice(None), delay_limit=None, tec=0):
     N, K, ampl = channels, repeats, flux
 
     NFFT = fft_factor * N
@@ -42,6 +42,12 @@ def experiment(flux=FLUX, SEFD=400., dump_period=DUMP_PERIOD, channels=CHANNELS,
     noise = np.random.randn(K, N) + 1j * np.random.randn(K, N)
     n = np.arange(N, dtype=float)
 
+    channel_freqs = bandwidth + n * channel_width
+    v = channel_freqs[:, np.newaxis] / 1e9
+    # This is roughly the worst differential slant TEC at 15 degrees elevation
+    baseline_km = 8
+    iono = np.radians(0.26 * tec * baseline_km / v)
+
     if window is None:
         SNR_sum = SNR * N
         curvature = (N * N - 1.0) / 12.0
@@ -53,7 +59,7 @@ def experiment(flux=FLUX, SEFD=400., dump_period=DUMP_PERIOD, channels=CHANNELS,
         curvature = weights @ (n - centroid) ** 2
     crlb = 0.5 / (SNR_sum * curvature)
 
-    angle = np.outer(n, freq) + phase
+    angle = np.outer(n, freq) + phase + iono
     x = ampl * np.exp(1j * angle.T) + np.sqrt(noise_var / 2) * noise
     if window is not None:
         x *= np.atleast_2d(window)
