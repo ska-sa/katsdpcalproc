@@ -16,6 +16,7 @@ FLUX = 10.
 DUMP_PERIOD = 2.0
 CHANNELS = 4096
 SAMPLE_RATE = 1712e6
+METHODS = ('Ludwig', 'Laura', 'Lindsay', 'SKA', 'Secant')
 
 
 def _wrap_angle(th):
@@ -64,19 +65,27 @@ def experiment(flux=FLUX, SEFD=400., dump_period=DUMP_PERIOD, channels=CHANNELS,
     if window is not None:
         x *= np.atleast_2d(window)
 
-    # Circular mean of phase difference
-    cmpd = mean_phase_diff(x[:, chan_range])
-    # FFT (no interpolation)
-    fft = fft_coarse(x, NFFT)
-    # FFT (quadratic interpolation)
-    fft_quad = fft_quadratic(x, NFFT)
-    # FFT (linear regression)
-    fft_lsq = fft_leastsq(x, NFFT)
-    # FFT (secant)
-    fft_sec = fft_secant(x, NFFT, discard_unconverged=True)
+    estimates = []
+    for method in METHODS:
+        if method == 'Ludwig':
+            # Circular mean of phase difference
+            estimates.append(mean_phase_diff(x[:, chan_range]))
+        elif method == 'Laura':
+            # FFT (linear regression)
+            estimates.append(fft_leastsq(x, NFFT))
+        elif method == 'Lindsay':
+            # FFT (no interpolation)
+            estimates.append(fft_coarse(x, NFFT))
+        elif method == 'SKA':
+            # FFT (quadratic interpolation)
+            estimates.append(fft_quadratic(x, NFFT))
+        elif method == 'Secant':
+            # FFT (secant)
+            estimates.append(fft_secant(x, NFFT, discard_unconverged=True))
+
     # Collect standard deviations
     stdevs = [np.sqrt(crlb)]
-    for freq_estm in [cmpd, fft_lsq, fft, fft_quad, fft_sec]:
+    for freq_estm in estimates:
         # Optionally use RMS instead of standard deviation in case of bias
         # residual = _wrap_angle(freq_estm - freq)
         # rms = np.sqrt(np.nanmean(residual * residual))
@@ -95,8 +104,7 @@ def plot_loglog(x, y):
     ax.xaxis.set_ticklabels(['{:g}'.format(fl) for fl in x])
     ax.set_xlim(log_x[0], log_x[-1])
     ax.grid(axis='y')
-    ax.legend(lines + crline,
-              ('Ludwig', 'Laura', 'Lindsay', 'SKA', 'Secant', 'Best (CRB)'))
+    ax.legend(lines + crline, METHODS + ('Best (CRB)',))
     ax.set_ylabel('Delay standard deviation [s]')
     return fig, ax
 
