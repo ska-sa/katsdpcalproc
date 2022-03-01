@@ -77,10 +77,11 @@ def experiment(flux=FLUX, SEFD=400., dump_period=DUMP_PERIOD, channels=CHANNELS,
     # Collect standard deviations
     stdevs = [np.sqrt(crlb)]
     for freq_estm in [cmpd, fft_lsq, fft, fft_quad, fft_sec]:
-        # Actually use RMS instead of stdev for the methods
-        residual = _wrap_angle(freq_estm - freq)
-        rms = np.sqrt(np.nanmean(residual * residual))
-        stdevs.append(rms)
+        # Optionally use RMS instead of standard deviation in case of bias
+        # residual = _wrap_angle(freq_estm - freq)
+        # rms = np.sqrt(np.nanmean(residual * residual))
+        # stdevs.append(rms)
+        stdevs.append(np.nanstd(_wrap_angle(freq_estm - freq)))
     # Convert from frequency in radians to delay in seconds
     return np.array(stdevs) * delay_alias / (2 * np.pi)
 
