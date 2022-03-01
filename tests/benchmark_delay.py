@@ -10,13 +10,14 @@ import matplotlib.pyplot as plt
 
 from katsdpcalproc.delay import (mean_phase_diff, fft_coarse, fft_quadratic,
                               fft_leastsq, fft_secant)
+from katsdpcalproc.delay_mattieu import mattieu
 
 
 FLUX = 10.
 DUMP_PERIOD = 2.0
 CHANNELS = 4096
 SAMPLE_RATE = 1712e6
-METHODS = ('Ludwig', 'Laura', 'Lindsay', 'SKA', 'Secant')
+METHODS = ('Ludwig', 'Laura', 'Lindsay', 'SKA', 'Secant')  # , 'Mattieu')
 
 
 def _wrap_angle(th):
@@ -82,6 +83,9 @@ def experiment(flux=FLUX, SEFD=400., dump_period=DUMP_PERIOD, channels=CHANNELS,
         elif method == 'Secant':
             # FFT (secant)
             estimates.append(fft_secant(x, NFFT, discard_unconverged=True))
+        elif method == 'Mattieu':
+            # Mattieu's phase slope method (with Bill's phase error estimate)
+            estimates.append(mattieu(x, gain=window, phase_std=1 / np.sqrt(SNR)))
 
     # Collect standard deviations
     stdevs = [np.sqrt(crlb)]
