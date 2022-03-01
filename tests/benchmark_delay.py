@@ -98,20 +98,20 @@ def plot_loglog(x, y):
 
 
 fluxes = np.array([0.1, 0.2, 0.5, 1., 2., 5., 10., 20., 50., 100.])
-delay_std = np.empty((len(fluxes), 6))
-for n, flux in enumerate(fluxes):
-    delay_std[n] = experiment(flux=flux)
-fig, ax = plot_loglog(fluxes, delay_std)
+delay_std = []
+for flux in fluxes:
+    delay_std.append(experiment(flux=flux))
+fig, ax = plot_loglog(fluxes, np.array(delay_std))
 ax.set_xlabel('Calibrator flux [Jy]')
 ax.set_title(f'Delay estimator performance vs flux (N={CHANNELS})')
 fig.savefig('delay_estm_vs_flux.png')
 
 log_sizes = np.arange(7, 14)
-delay_std = np.empty((len(log_sizes), 6))
-for n, log_size in enumerate(log_sizes):
+delay_std = []
+for log_size in log_sizes:
     N = 2 ** log_size
-    delay_std[n] = experiment(dump_period=DUMP_PERIOD * N / CHANNELS, channels=N)
-fig, ax = plot_loglog(2 ** log_sizes, delay_std)
+    delay_std.append(experiment(dump_period=DUMP_PERIOD * N / CHANNELS, channels=N))
+fig, ax = plot_loglog(2 ** log_sizes, np.array(delay_std))
 ax.set_xlabel('Number of samples (N)')
 ax.set_title(f'Delay estimator performance vs N (flux={FLUX})')
 fig.savefig('delay_estm_vs_N.png')
@@ -136,11 +136,11 @@ gain *= gate
 chan_range = slice(681 * gate_scale, 792 * gate_scale)
 
 fluxes = np.array([0.1, 0.2, 0.5, 1., 2., 5., 10., 20., 50., 100.])
-delay_std = np.empty((len(fluxes), 6))
-for n, flux in enumerate(fluxes):
-    delay_std[n] = experiment(flux=flux * flux_shape, SEFD=sefd, window=gain,
-                              chan_range=chan_range, delay_limit=10 / SAMPLE_RATE)
-fig, ax = plot_loglog(fluxes, delay_std)
+delay_std = []
+for flux in fluxes:
+    delay_std.append(experiment(flux=flux * flux_shape, SEFD=sefd, window=gain,
+                                chan_range=chan_range, delay_limit=10 / SAMPLE_RATE))
+fig, ax = plot_loglog(fluxes, np.array(delay_std))
 ax.set_xlabel('Calibrator flux [Jy]')
 ax.set_title(f'Realistic delay estimator performance (N={CHANNELS})')
 fig.savefig('delay_estm_realistic.png')
