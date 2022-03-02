@@ -16,7 +16,7 @@ from katsdpcalproc.delay_mattieu import mattieu
 FLUX = 10.
 SEFD = 400.
 DUMP_PERIOD = 2.0
-N_CHANS = 4096
+N_CHANS = 1024
 SAMPLE_RATE = 1712e6
 METHODS = ('Ludwig', 'Laura', 'Lindsay', 'SKA', 'Secant')  # , 'Mattieu')
 
@@ -25,29 +25,42 @@ def _wrap_angle(th):
     return (th + np.pi) % (2. * np.pi) - np.pi
 
 
+def _generate_data(slopes, channel_freqs, ampl, noise_var, window=None, tec=0):
+    n_slopes = len(slopes)
+    n_chans = len(channel_freqs)
+    phase = 2. * np.pi * np.random.rand(n_slopes)
+    noise = np.random.randn(n_slopes, n_chans) + 1j * np.random.randn(n_slopes, n_chans)
+    n = np.arange(n_chans, dtype=float)
+
+    v = channel_freqs[:, np.newaxis] / 1e9
+    # This is roughly the worst differential slant TEC at 15 degrees elevation
+    baseline_km = 8
+    iono = np.radians(0.26 * tec * baseline_km / v)
+
+    angle = np.outer(n, slopes) + phase + iono
+    x = ampl * np.exp(1j * angle.T) + np.sqrt(noise_var / 2) * noise
+    if window is not None:
+        x *= np.atleast_2d(window)
+    return x
+
+
 def experiment(ampl=FLUX, sefd=SEFD, dump_period=DUMP_PERIOD, n_chans=N_CHANS,
                sample_rate=SAMPLE_RATE, n_repeats=1000, fft_factor=2, window=None,
                chan_range=slice(None), delay_limit=None, tec=0):
     n_fft = fft_factor * n_chans
     bandwidth = sample_rate / 2
     channel_width = bandwidth / n_chans
+    n = np.arange(n_chans, dtype=float)
+    channel_freqs = bandwidth + n * channel_width
     delay_alias = 1 / channel_width
     samples = dump_period / delay_alias
     noise_var = 2 * sefd * sefd / samples
     snr = ampl * ampl / noise_var
 
-    # FFT+secant method does not like frequencies around +- pi
-    freq_scale = 0.99 if delay_limit is None else delay_limit / delay_alias
-    freq = 2. * np.pi * (np.random.rand(n_repeats) - 0.5) * freq_scale
-    phase = 2. * np.pi * np.random.rand(n_repeats)
-    noise = np.random.randn(n_repeats, n_chans) + 1j * np.random.randn(n_repeats, n_chans)
-    n = np.arange(n_chans, dtype=float)
-
-    channel_freqs = bandwidth + n * channel_width
-    v = channel_freqs[:, np.newaxis] / 1e9
-    # This is roughly the worst differential slant TEC at 15 degrees elevation
-    baseline_km = 8
-    iono = np.radians(0.26 * tec * baseline_km / v)
+    slopes = 2. * np.pi * (np.random.rand(n_repeats) - 0.5)
+    # FFT+secant method does not like phase slopes around +- pi / channel
+    slopes *= 0.99 if delay_limit is None else delay_limit / delay_alias
+    x = _generate_data(slopes, channel_freqs, ampl, noise_var, window, tec)
 
     if window is None:
         snr_sum = snr * n_chans
@@ -59,11 +72,6 @@ def experiment(ampl=FLUX, sefd=SEFD, dump_period=DUMP_PERIOD, n_chans=N_CHANS,
         centroid = weights @ n
         curvature = weights @ (n - centroid) ** 2
     crlb = 0.5 / (snr_sum * curvature)
-
-    angle = np.outer(n, freq) + phase + iono
-    x = ampl * np.exp(1j * angle.T) + np.sqrt(noise_var / 2) * noise
-    if window is not None:
-        x *= np.atleast_2d(window)
 
     estimates = []
     for method in METHODS:
@@ -88,13 +96,13 @@ def experiment(ampl=FLUX, sefd=SEFD, dump_period=DUMP_PERIOD, n_chans=N_CHANS,
 
     # Collect standard deviations
     stdevs = [np.sqrt(crlb)]
-    for freq_estm in estimates:
+    for slope_estm in estimates:
         # Optionally use RMS instead of standard deviation in case of bias
         # residual = _wrap_angle(freq_estm - freq)
         # rms = np.sqrt(np.nanmean(residual * residual))
         # stdevs.append(rms)
-        stdevs.append(np.nanstd(_wrap_angle(freq_estm - freq)))
-    # Convert from frequency in radians to delay in seconds
+        stdevs.append(np.nanstd(_wrap_angle(slope_estm - slopes)))
+    # Convert from phase slope in radians/channel to delay in seconds
     return np.array(stdevs) * delay_alias / (2 * np.pi)
 
 
