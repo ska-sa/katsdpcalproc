@@ -14,8 +14,9 @@ from katsdpcalproc.delay_mattieu import mattieu
 
 
 FLUX = 10.
+SEFD = 400.
 DUMP_PERIOD = 2.0
-CHANNELS = 4096
+N_CHANS = 4096
 SAMPLE_RATE = 1712e6
 METHODS = ('Ludwig', 'Laura', 'Lindsay', 'SKA', 'Secant')  # , 'Mattieu')
 
@@ -24,25 +25,23 @@ def _wrap_angle(th):
     return (th + np.pi) % (2. * np.pi) - np.pi
 
 
-def experiment(flux=FLUX, SEFD=400., dump_period=DUMP_PERIOD, channels=CHANNELS,
-               sample_rate=SAMPLE_RATE, repeats=1000, fft_factor=2, window=None,
+def experiment(ampl=FLUX, sefd=SEFD, dump_period=DUMP_PERIOD, n_chans=N_CHANS,
+               sample_rate=SAMPLE_RATE, n_repeats=1000, fft_factor=2, window=None,
                chan_range=slice(None), delay_limit=None, tec=0):
-    N, K, ampl = channels, repeats, flux
-
-    NFFT = fft_factor * N
+    n_fft = fft_factor * n_chans
     bandwidth = sample_rate / 2
-    channel_width = bandwidth / N
+    channel_width = bandwidth / n_chans
     delay_alias = 1 / channel_width
     samples = dump_period / delay_alias
-    noise_var = 2 * SEFD * SEFD / samples
-    SNR = ampl * ampl / noise_var
+    noise_var = 2 * sefd * sefd / samples
+    snr = ampl * ampl / noise_var
 
     # FFT+secant method does not like frequencies around +- pi
     freq_scale = 0.99 if delay_limit is None else delay_limit / delay_alias
-    freq = 2. * np.pi * (np.random.rand(K) - 0.5) * freq_scale
-    phase = 2. * np.pi * np.random.rand(K)
-    noise = np.random.randn(K, N) + 1j * np.random.randn(K, N)
-    n = np.arange(N, dtype=float)
+    freq = 2. * np.pi * (np.random.rand(n_repeats) - 0.5) * freq_scale
+    phase = 2. * np.pi * np.random.rand(n_repeats)
+    noise = np.random.randn(n_repeats, n_chans) + 1j * np.random.randn(n_repeats, n_chans)
+    n = np.arange(n_chans, dtype=float)
 
     channel_freqs = bandwidth + n * channel_width
     v = channel_freqs[:, np.newaxis] / 1e9
@@ -51,15 +50,15 @@ def experiment(flux=FLUX, SEFD=400., dump_period=DUMP_PERIOD, channels=CHANNELS,
     iono = np.radians(0.26 * tec * baseline_km / v)
 
     if window is None:
-        SNR_sum = SNR * N
-        curvature = (N * N - 1.0) / 12.0
+        snr_sum = snr * n_chans
+        curvature = (n_chans * n_chans - 1.0) / 12.0
     else:
         gate = window.nonzero()[0]
         weights = window / np.sum(window)
-        SNR_sum = SNR @ weights * len(gate)
+        snr_sum = snr @ weights * len(gate)
         centroid = weights @ n
         curvature = weights @ (n - centroid) ** 2
-    crlb = 0.5 / (SNR_sum * curvature)
+    crlb = 0.5 / (snr_sum * curvature)
 
     angle = np.outer(n, freq) + phase + iono
     x = ampl * np.exp(1j * angle.T) + np.sqrt(noise_var / 2) * noise
@@ -76,16 +75,16 @@ def experiment(flux=FLUX, SEFD=400., dump_period=DUMP_PERIOD, channels=CHANNELS,
             estimates.append(fft_leastsq(x[:, chan_range]))
         elif method == 'Lindsay':
             # FFT (no interpolation)
-            estimates.append(fft_coarse(x, NFFT))
+            estimates.append(fft_coarse(x, n_fft))
         elif method == 'SKA':
             # FFT (quadratic interpolation)
-            estimates.append(fft_quadratic(x, NFFT))
+            estimates.append(fft_quadratic(x, n_fft))
         elif method == 'Secant':
             # FFT (secant)
-            estimates.append(fft_secant(x, NFFT, discard_unconverged=True))
+            estimates.append(fft_secant(x, n_fft, discard_unconverged=True))
         elif method == 'Mattieu':
             # Mattieu's phase slope method (with Bill's phase error estimate)
-            estimates.append(mattieu(x, gain=window, phase_std=1 / np.sqrt(SNR)))
+            estimates.append(mattieu(x, gain=window, phase_std=1 / np.sqrt(snr)))
 
     # Collect standard deviations
     stdevs = [np.sqrt(crlb)]
@@ -116,23 +115,23 @@ def plot_loglog(x, y):
 fluxes = np.array([0.1, 0.2, 0.5, 1., 2., 5., 10., 20., 50., 100.])
 delay_std = []
 for flux in fluxes:
-    delay_std.append(experiment(flux=flux))
+    delay_std.append(experiment(ampl=flux))
 fig, ax = plot_loglog(fluxes, np.array(delay_std))
 ax.set_xlabel('Calibrator flux [Jy]')
-ax.set_title(f'Delay estimator performance vs flux (N={CHANNELS})')
+ax.set_title(f'Delay estimator performance vs flux (N={N_CHANS})')
 fig.savefig('delay_estm_vs_flux.png')
 
 log_sizes = np.arange(7, 14)
 delay_std = []
 for log_size in log_sizes:
-    N = 2 ** log_size
-    delay_std.append(experiment(dump_period=DUMP_PERIOD * N / CHANNELS, channels=N))
+    n_chans = 2 ** log_size
+    delay_std.append(experiment(dump_period=DUMP_PERIOD * n_chans / N_CHANS, n_chans=n_chans))
 fig, ax = plot_loglog(2 ** log_sizes, np.array(delay_std))
 ax.set_xlabel('Number of samples (N)')
 ax.set_title(f'Delay estimator performance vs N (flux={FLUX})')
 fig.savefig('delay_estm_vs_N.png')
 
-t = np.arange(CHANNELS) / CHANNELS
+t = np.arange(N_CHANS) / N_CHANS
 flux_shape = 1.6 * np.exp(-0.65 * np.log(t + 1))
 sefd = 500 * np.exp(-0.3 * np.log(t + 1))
 gain = np.full_like(t, 0.01)
@@ -142,7 +141,7 @@ gain /= np.median(gain)
 gate = np.zeros_like(t)
 gate_transitions = [0, 1, 49, 50, 81, 86, 93, 135, 190, 203, 279, 282, 338, 536,
                     657, 681, 793, 901, 910, 926, 955, 968, 972, 973, 1023, 1024]
-gate_scale = int(CHANNELS / gate_transitions[-1])
+gate_scale = int(N_CHANS / gate_transitions[-1])
 segm_start = gate_transitions[:-1]
 segm_end = gate_transitions[1:]
 for n, (b, e) in enumerate(zip(segm_start, segm_end)):
@@ -155,11 +154,11 @@ chan_range = slice(563 * gate_scale, 613 * gate_scale)  # cal pipeline k_bfreq..
 fluxes = np.array([0.1, 0.2, 0.5, 1., 2., 5., 10., 20., 50., 100.])
 delay_std = []
 for flux in fluxes:
-    delay_std.append(experiment(flux=flux * flux_shape, SEFD=sefd, window=gain,
+    delay_std.append(experiment(ampl=flux * flux_shape, sefd=sefd, window=gain,
                                 chan_range=chan_range, delay_limit=10 / SAMPLE_RATE))
 fig, ax = plot_loglog(fluxes, np.array(delay_std))
 ax.set_xlabel('Calibrator flux [Jy]')
-ax.set_title(f'Realistic delay estimator performance (N={CHANNELS})')
+ax.set_title(f'Realistic delay estimator performance (N={N_CHANS})')
 fig.savefig('delay_estm_realistic.png')
 
 plt.show()
