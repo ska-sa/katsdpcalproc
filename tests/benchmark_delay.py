@@ -44,35 +44,8 @@ def _generate_data(slopes, channel_freqs, ampl, noise_var, window=None, tec=0):
     return x
 
 
-def experiment(ampl=FLUX, sefd=SEFD, dump_period=DUMP_PERIOD, n_chans=N_CHANS,
-               sample_rate=SAMPLE_RATE, n_repeats=1000, fft_factor=2, window=None,
-               chan_range=slice(None), delay_limit=None, tec=0):
-    n_fft = fft_factor * n_chans
-    bandwidth = sample_rate / 2
-    channel_width = bandwidth / n_chans
-    n = np.arange(n_chans, dtype=float)
-    channel_freqs = bandwidth + n * channel_width
-    delay_alias = 1 / channel_width
-    samples = dump_period / delay_alias
-    noise_var = 2 * sefd * sefd / samples
-    snr = ampl * ampl / noise_var
-
-    slopes = 2. * np.pi * (np.random.rand(n_repeats) - 0.5)
-    # FFT+secant method does not like phase slopes around +- pi / channel
-    slopes *= 0.99 if delay_limit is None else delay_limit / delay_alias
-    x = _generate_data(slopes, channel_freqs, ampl, noise_var, window, tec)
-
-    if window is None:
-        snr_sum = snr * n_chans
-        curvature = (n_chans * n_chans - 1.0) / 12.0
-    else:
-        gate = window.nonzero()[0]
-        weights = window / np.sum(window)
-        snr_sum = snr @ weights * len(gate)
-        centroid = weights @ n
-        curvature = weights @ (n - centroid) ** 2
-    crlb = 0.5 / (snr_sum * curvature)
-
+def _estimate_slopes(x, fft_factor, chan_range, window, snr):
+    n_fft = fft_factor * x.shape[-1]
     estimates = []
     for method in METHODS:
         if method == 'Ludwig':
@@ -93,6 +66,37 @@ def experiment(ampl=FLUX, sefd=SEFD, dump_period=DUMP_PERIOD, n_chans=N_CHANS,
         elif method == 'Mattieu':
             # Mattieu's phase slope method (with Bill's phase error estimate)
             estimates.append(mattieu(x, gain=window, phase_std=1 / np.sqrt(snr)))
+    return np.array(estimates)
+
+
+def experiment(ampl=FLUX, sefd=SEFD, dump_period=DUMP_PERIOD, n_chans=N_CHANS,
+               sample_rate=SAMPLE_RATE, n_repeats=1000, fft_factor=2, window=None,
+               chan_range=slice(None), delay_limit=None, tec=0):
+    bandwidth = sample_rate / 2
+    channel_width = bandwidth / n_chans
+    n = np.arange(n_chans, dtype=float)
+    channel_freqs = bandwidth + n * channel_width
+    delay_alias = 1 / channel_width
+    samples = dump_period / delay_alias
+    noise_var = 2 * sefd * sefd / samples
+    snr = ampl * ampl / noise_var
+
+    slopes = 2. * np.pi * (np.random.rand(n_repeats) - 0.5)
+    # FFT+secant method does not like phase slopes around +- pi / channel
+    slopes *= 0.99 if delay_limit is None else delay_limit / delay_alias
+    x = _generate_data(slopes, channel_freqs, ampl, noise_var, window, tec)
+    estimates = _estimate_slopes(x, fft_factor, chan_range, window, snr)
+
+    if window is None:
+        snr_sum = snr * n_chans
+        curvature = (n_chans * n_chans - 1.0) / 12.0
+    else:
+        gate = window.nonzero()[0]
+        weights = window / np.sum(window)
+        snr_sum = snr @ weights * len(gate)
+        centroid = weights @ n
+        curvature = weights @ (n - centroid) ** 2
+    crlb = 0.5 / (snr_sum * curvature)
 
     # Collect standard deviations
     stdevs = [np.sqrt(crlb)]
