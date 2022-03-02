@@ -73,7 +73,7 @@ def experiment(flux=FLUX, SEFD=400., dump_period=DUMP_PERIOD, channels=CHANNELS,
             estimates.append(mean_phase_diff(x[:, chan_range]))
         elif method == 'Laura':
             # FFT (linear regression)
-            estimates.append(fft_leastsq(x, NFFT))
+            estimates.append(fft_leastsq(x[:, chan_range]))
         elif method == 'Lindsay':
             # FFT (no interpolation)
             estimates.append(fft_coarse(x, NFFT))
@@ -149,7 +149,8 @@ for n, (b, e) in enumerate(zip(segm_start, segm_end)):
     segment = slice(gate_scale * b, gate_scale * e)
     gate[segment] = float(n % 2 == 1)
 gain *= gate
-chan_range = slice(681 * gate_scale, 792 * gate_scale)
+# chan_range = slice(681 * gate_scale, 792 * gate_scale)  # last run of old baseline cal
+chan_range = slice(563 * gate_scale, 613 * gate_scale)  # cal pipeline k_bfreq..k_efreq
 
 fluxes = np.array([0.1, 0.2, 0.5, 1., 2., 5., 10., 20., 50., 100.])
 delay_std = []
