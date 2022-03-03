@@ -37,6 +37,17 @@ def _calculate_params(sample_rate, n_chans, dump_period, ampl, sefd):
     return channel_freqs, delay_alias, noise_var, snr
 
 
+def _ant_vs_baseline(n_ants):
+    baselines = [(a1, a2) for a1 in range(n_ants) for a2 in range(n_ants) if a1 < a2]
+    to_baseline = np.zeros((len(baselines), n_ants))
+    for n, (ant1, ant2) in enumerate(baselines):
+        to_baseline[n, ant1] = -1.0
+        to_baseline[n, ant2] = +1.0
+    U, s, Vrt = np.linalg.svd(to_baseline[:, 1:], full_matrices=False)
+    to_ant = Vrt.T @ np.diag(1. / s) @ U.T
+    return baselines, to_baseline, to_ant
+
+
 def _generate_data(slopes, channel_freqs, ampl, noise_var, window=None, tec=0):
     n_slopes = len(slopes)
     n_chans = len(channel_freqs)
@@ -81,7 +92,7 @@ def _estimate_slopes(x, fft_factor, chan_range, window, snr):
     return np.array(estimates)
 
 
-def _measure_error(slope_estimates, slopes, snr, n_chans, window):
+def _measure_error(slope_estimates, slopes, snr, n_chans, window, n_ants=None):
     # Calculate Cramer-Rao lower bound
     if window is None:
         snr_sum = snr * n_chans
@@ -94,7 +105,10 @@ def _measure_error(slope_estimates, slopes, snr, n_chans, window):
         centroid = weights @ n
         curvature = weights @ (n - centroid) ** 2
     crlb = 0.5 / (snr_sum * curvature)
-
+    if n_ants is not None:
+        # Going from baseline-based to antenna-based, you score an extra factor
+        # determined by np.sum((Vrt.T / s[np.newaxis, :]) ** 2, axis=1).mean()
+        crlb *= 2.0 / n_ants
     # Collect standard deviations
     stdevs = np.nanstd(_wrap_angle(slope_estimates - slopes), axis=-1)
     # Optionally use RMS instead of standard deviation in case of bias
@@ -103,9 +117,9 @@ def _measure_error(slope_estimates, slopes, snr, n_chans, window):
     return np.r_[np.sqrt(crlb), stdevs]
 
 
-def experiment(ampl=FLUX, sefd=SEFD, dump_period=DUMP_PERIOD, n_chans=N_CHANS,
-               sample_rate=SAMPLE_RATE, n_repeats=1000, fft_factor=2, window=None,
-               chan_range=slice(None), delay_limit=None, tec=0):
+def bl_experiment(ampl=FLUX, sefd=SEFD, dump_period=DUMP_PERIOD, n_chans=N_CHANS,
+                  sample_rate=SAMPLE_RATE, n_repeats=1000, fft_factor=2, window=None,
+                  chan_range=slice(None), delay_limit=None, tec=0):
     channel_freqs, delay_alias, noise_var, snr = _calculate_params(
         sample_rate, n_chans, dump_period, ampl, sefd)
     slopes = 2. * np.pi * (np.random.rand(n_repeats) - 0.5)
@@ -114,6 +128,33 @@ def experiment(ampl=FLUX, sefd=SEFD, dump_period=DUMP_PERIOD, n_chans=N_CHANS,
     x = _generate_data(slopes, channel_freqs, ampl, noise_var, window, tec)
     slope_estimates = _estimate_slopes(x, fft_factor, chan_range, window, snr)
     stdevs = _measure_error(slope_estimates, slopes, snr, n_chans, window)
+    # Convert from phase slope in radians/channel to delay in seconds
+    return stdevs * delay_alias / (2 * np.pi)
+
+
+def ant_experiment(ampl=FLUX, sefd=SEFD, dump_period=DUMP_PERIOD, n_chans=N_CHANS,
+                   sample_rate=SAMPLE_RATE, n_repeats=70, n_ants=15,
+                   fft_factor=2, window=None, chan_range=slice(None),
+                   delay_limit=None, tec=0):
+    channel_freqs, delay_alias, noise_var, snr = _calculate_params(
+        sample_rate, n_chans, dump_period, ampl, sefd)
+    slopes_per_ant = 2. * np.pi * (np.random.rand(n_repeats, n_ants) - 0.5)
+    # Technically we need non-linear solver for angle ambiguities unless we constrain slopes
+    slopes_per_ant *= 0.25 if delay_limit is None else delay_limit / delay_alias
+    # First antenna is reference antenna
+    slopes_per_ant[:, 0] = 0.
+    # Convert to per-baseline slopes
+    baselines, to_baseline, to_ant = _ant_vs_baseline(n_ants)
+    slopes_per_bl = (slopes_per_ant @ to_baseline.T).ravel()
+    x = _generate_data(slopes_per_bl, channel_freqs, ampl, noise_var, window, tec)
+    # Fit per-baseline slopes
+    slope_estm_per_bl = _estimate_slopes(x, fft_factor, chan_range, window, snr)
+    # Go back to per-antenna estimates
+    slope_estm_per_bl = slope_estm_per_bl.reshape(-1, n_repeats, len(baselines))
+    slope_estm_per_ant = slope_estm_per_bl @ to_ant.T
+    slope_estm_per_ant = slope_estm_per_ant.reshape(-1, n_repeats * (n_ants - 1))
+    stdevs = _measure_error(slope_estm_per_ant, slopes_per_ant[:, 1:].ravel(),
+                            snr, n_chans, window, n_ants)
     # Convert from phase slope in radians/channel to delay in seconds
     return stdevs * delay_alias / (2 * np.pi)
 
@@ -135,21 +176,21 @@ def plot_loglog(x, y):
 fluxes = np.array([0.1, 0.2, 0.5, 1., 2., 5., 10., 20., 50., 100.])
 delay_std = []
 for flux in fluxes:
-    delay_std.append(experiment(ampl=flux))
+    delay_std.append(bl_experiment(ampl=flux))
 fig, ax = plot_loglog(fluxes, np.array(delay_std))
 ax.set_xlabel('Calibrator flux [Jy]')
 ax.set_title(f'Delay estimator performance vs flux (N={N_CHANS})')
-fig.savefig('delay_estm_vs_flux.png')
+fig.savefig('delay_per_bl_vs_flux.png')
 
 log_sizes = np.arange(7, 14)
 delay_std = []
 for log_size in log_sizes:
     n_chans = 2 ** log_size
-    delay_std.append(experiment(dump_period=DUMP_PERIOD * n_chans / N_CHANS, n_chans=n_chans))
+    delay_std.append(bl_experiment(dump_period=DUMP_PERIOD * n_chans / N_CHANS, n_chans=n_chans))
 fig, ax = plot_loglog(2 ** log_sizes, np.array(delay_std))
 ax.set_xlabel('Number of samples (N)')
 ax.set_title(f'Delay estimator performance vs N (flux={FLUX})')
-fig.savefig('delay_estm_vs_N.png')
+fig.savefig('delay_per_bl_vs_N.png')
 
 t = np.arange(N_CHANS) / N_CHANS
 flux_shape = 1.6 * np.exp(-0.65 * np.log(t + 1))
@@ -174,11 +215,30 @@ chan_range = slice(563 * gate_scale, 613 * gate_scale)  # cal pipeline k_bfreq..
 fluxes = np.array([0.1, 0.2, 0.5, 1., 2., 5., 10., 20., 50., 100.])
 delay_std = []
 for flux in fluxes:
-    delay_std.append(experiment(ampl=flux * flux_shape, sefd=sefd, window=gain,
-                                chan_range=chan_range, delay_limit=10 / SAMPLE_RATE))
+    delay_std.append(bl_experiment(ampl=flux * flux_shape, sefd=sefd, window=gain,
+                                   chan_range=chan_range, delay_limit=10 / SAMPLE_RATE))
 fig, ax = plot_loglog(fluxes, np.array(delay_std))
 ax.set_xlabel('Calibrator flux [Jy]')
 ax.set_title(f'Realistic delay estimator performance (N={N_CHANS})')
-fig.savefig('delay_estm_realistic.png')
+fig.savefig('delay_per_bl_realistic.png')
+
+fluxes = np.array([0.1, 0.2, 0.5, 1., 2., 5., 10., 20., 50., 100.])
+delay_std = []
+for flux in fluxes:
+    delay_std.append(ant_experiment(ampl=flux))
+fig, ax = plot_loglog(fluxes, np.array(delay_std))
+ax.set_xlabel('Calibrator flux [Jy]')
+ax.set_title(f'Delay estimator performance vs flux (N={N_CHANS})')
+fig.savefig('delay_per_ant_vs_flux.png')
+
+fluxes = np.array([0.1, 0.2, 0.5, 1., 2., 5., 10., 20., 50., 100.])
+delay_std = []
+for flux in fluxes:
+    delay_std.append(ant_experiment(ampl=flux * flux_shape, sefd=sefd, window=gain,
+                                    chan_range=chan_range, delay_limit=10 / SAMPLE_RATE))
+fig, ax = plot_loglog(fluxes, np.array(delay_std))
+ax.set_xlabel('Calibrator flux [Jy]')
+ax.set_title(f'Realistic delay estimator performance (N={N_CHANS})')
+fig.savefig('delay_per_ant_realistic.png')
 
 plt.show()
