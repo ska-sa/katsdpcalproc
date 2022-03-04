@@ -16,7 +16,7 @@ from katsdpcal.calprocs import k_fit
 
 FLUX = 10.
 SEFD = 400.
-DUMP_PERIOD = 2.0
+DUMP_PERIOD = 120.0
 N_CHANS = 1024
 SAMPLE_RATE = 1712e6
 METHODS = ('Ludwig', 'Laura', 'Lindsay', 'SKA', 'Secant')  # , 'Mattieu')
