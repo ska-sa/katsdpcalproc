@@ -39,14 +39,13 @@ def _calculate_params(sample_rate, n_chans, dump_period, ampl, sefd):
 
 
 def _ant_vs_baseline(n_ants):
-    baselines = [(a1, a2) for a1 in range(n_ants) for a2 in range(n_ants) if a1 < a2]
+    baselines = np.c_[np.triu_indices(n_ants, 1)]
     to_baseline = np.zeros((len(baselines), n_ants))
     for n, (ant1, ant2) in enumerate(baselines):
         to_baseline[n, ant1] = -1.0
         to_baseline[n, ant2] = +1.0
-    U, s, Vrt = np.linalg.svd(to_baseline[:, 1:], full_matrices=False)
-    to_ant = Vrt.T @ np.diag(1. / s) @ U.T
-    return np.array(baselines), to_baseline, to_ant
+    to_ant = np.linalg.pinv(to_baseline[:, 1:])
+    return baselines, to_baseline, to_ant
 
 
 def _generate_data(slopes, channel_freqs, ampl, noise_var, window=None, tec=0):
