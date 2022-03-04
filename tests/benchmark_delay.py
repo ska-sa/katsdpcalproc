@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from katsdpcalproc.delay import (mean_phase_diff, fft_coarse, fft_quadratic,
                               fft_leastsq, fft_secant)
 from katsdpcalproc.delay_mattieu import mattieu
+from katsdpcal.calprocs import k_fit
 
 
 FLUX = 10.
@@ -45,7 +46,7 @@ def _ant_vs_baseline(n_ants):
         to_baseline[n, ant2] = +1.0
     U, s, Vrt = np.linalg.svd(to_baseline[:, 1:], full_matrices=False)
     to_ant = Vrt.T @ np.diag(1. / s) @ U.T
-    return baselines, to_baseline, to_ant
+    return np.array(baselines), to_baseline, to_ant
 
 
 def _generate_data(slopes, channel_freqs, ampl, noise_var, window=None, tec=0):
@@ -92,6 +93,21 @@ def _estimate_slopes(x, fft_factor, chan_range, window, snr):
     return np.array(estimates)
 
 
+def _estimate_slopes_k_fit(x, baselines, n_ants, channel_freqs, delay_alias):
+    n_repeats, n_bls, n_chans = x.shape
+    cal_vis = np.empty((n_chans, 1, n_bls), dtype=np.complex64)
+    cal_weights = np.ones_like(cal_vis, dtype=np.float32)
+    slope_estimates = np.zeros((n_repeats, n_ants - 1))
+    for m in range(n_repeats):
+       cal_vis[:] = x[m].T[:, np.newaxis, :]
+       cal_weights[:] = 1.0
+       cal_weights[np.abs(cal_vis) == 0.0] = 0.0
+       # The pipeline delays have the opposite sign to the definition
+       k_delays = -k_fit(cal_vis, cal_weights, baselines, channel_freqs)
+       slope_estimates[m] = k_delays[0, 1:] * 2 * np.pi / delay_alias
+    return slope_estimates
+
+
 def _measure_error(slope_estimates, slopes, snr, n_chans, window, n_ants=None):
     # Calculate Cramer-Rao lower bound
     if window is None:
@@ -133,7 +149,7 @@ def bl_experiment(ampl=FLUX, sefd=SEFD, dump_period=DUMP_PERIOD, n_chans=N_CHANS
 
 
 def ant_experiment(ampl=FLUX, sefd=SEFD, dump_period=DUMP_PERIOD, n_chans=N_CHANS,
-                   sample_rate=SAMPLE_RATE, n_repeats=70, n_ants=15,
+                   sample_rate=SAMPLE_RATE, n_repeats=10, n_ants=15,
                    fft_factor=2, window=None, chan_range=slice(None),
                    delay_limit=None, tec=0):
     channel_freqs, delay_alias, noise_var, snr = _calculate_params(
@@ -145,21 +161,28 @@ def ant_experiment(ampl=FLUX, sefd=SEFD, dump_period=DUMP_PERIOD, n_chans=N_CHAN
     slopes_per_ant[:, 0] = 0.
     # Convert to per-baseline slopes
     baselines, to_baseline, to_ant = _ant_vs_baseline(n_ants)
+    n_bls = len(baselines)
     slopes_per_bl = (slopes_per_ant @ to_baseline.T).ravel()
     x = _generate_data(slopes_per_bl, channel_freqs, ampl, noise_var, window, tec)
     # Fit per-baseline slopes
     slope_estm_per_bl = _estimate_slopes(x, fft_factor, chan_range, window, snr)
     # Go back to per-antenna estimates
-    slope_estm_per_bl = slope_estm_per_bl.reshape(-1, n_repeats, len(baselines))
+    slope_estm_per_bl = slope_estm_per_bl.reshape(-1, n_repeats, n_bls)
     slope_estm_per_ant = slope_estm_per_bl @ to_ant.T
     slope_estm_per_ant = slope_estm_per_ant.reshape(-1, n_repeats * (n_ants - 1))
+    # Add the cal pipeline solver
+    x = x.reshape(n_repeats, n_bls, n_chans)
+    slope_estm_k_fit = _estimate_slopes_k_fit(
+        x[..., chan_range], baselines, n_ants, channel_freqs[chan_range], delay_alias
+    )
+    slope_estm_per_ant = np.vstack((slope_estm_per_ant, slope_estm_k_fit.ravel()))
     stdevs = _measure_error(slope_estm_per_ant, slopes_per_ant[:, 1:].ravel(),
                             snr, n_chans, window, n_ants)
     # Convert from phase slope in radians/channel to delay in seconds
     return stdevs * delay_alias / (2 * np.pi)
 
 
-def plot_loglog(x, y):
+def plot_loglog(x, y, k_fit=False):
     fig, ax = plt.subplots(figsize=(8, 6))
     log_x = np.log10(x)
     crline = ax.semilogy(log_x, y[:, 0], 'k--', marker='o')
@@ -168,7 +191,8 @@ def plot_loglog(x, y):
     ax.xaxis.set_ticklabels(['{:g}'.format(fl) for fl in x])
     ax.set_xlim(log_x[0], log_x[-1])
     ax.grid(axis='y')
-    ax.legend(lines + crline, METHODS + ('Best (CRB)',))
+    methods = METHODS + ('k_fit',) if k_fit else METHODS
+    ax.legend(lines + crline, methods + ('Best (CRB)',))
     ax.set_ylabel('Delay standard deviation [s]')
     return fig, ax
 
@@ -226,7 +250,7 @@ fluxes = np.array([0.1, 0.2, 0.5, 1., 2., 5., 10., 20., 50., 100.])
 delay_std = []
 for flux in fluxes:
     delay_std.append(ant_experiment(ampl=flux))
-fig, ax = plot_loglog(fluxes, np.array(delay_std))
+fig, ax = plot_loglog(fluxes, np.array(delay_std), k_fit=True)
 ax.set_xlabel('Calibrator flux [Jy]')
 ax.set_title(f'Delay estimator performance vs flux (N={N_CHANS})')
 fig.savefig('delay_per_ant_vs_flux.png')
@@ -236,7 +260,7 @@ delay_std = []
 for flux in fluxes:
     delay_std.append(ant_experiment(ampl=flux * flux_shape, sefd=sefd, window=gain,
                                     chan_range=chan_range, delay_limit=10 / SAMPLE_RATE))
-fig, ax = plot_loglog(fluxes, np.array(delay_std))
+fig, ax = plot_loglog(fluxes, np.array(delay_std), k_fit=True)
 ax.set_xlabel('Calibrator flux [Jy]')
 ax.set_title(f'Realistic delay estimator performance (N={N_CHANS})')
 fig.savefig('delay_per_ant_realistic.png')
