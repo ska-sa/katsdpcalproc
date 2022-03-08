@@ -19,7 +19,9 @@ SEFD = 400.
 DUMP_PERIOD = 120.0
 N_CHANS = 1024
 SAMPLE_RATE = 1712e6
+N_ANTS = 15
 METHODS = ('Ludwig', 'Laura', 'Lindsay', 'SKA', 'Secant')  # , 'Mattieu')
+RESULTS = 'perant'
 
 
 def _wrap_angle(th):
@@ -107,8 +109,8 @@ def _estimate_slopes_k_fit(x, baselines, n_ants, channel_freqs, delay_alias):
     return slope_estimates
 
 
-def _measure_error(slope_estimates, slopes, snr, n_chans, window, n_ants=None):
-    # Calculate Cramer-Rao lower bound
+def _cramer_rao_bound(snr, n_chans, window=None, n_ants=None):
+    """Cramer-Rao bound as a standard deviation [radians/channel]."""
     if window is None:
         snr_sum = snr * n_chans
         curvature = (n_chans * n_chans - 1.0) / 12.0
@@ -119,17 +121,12 @@ def _measure_error(slope_estimates, slopes, snr, n_chans, window, n_ants=None):
         n = np.arange(n_chans, dtype=float)
         centroid = weights @ n
         curvature = weights @ (n - centroid) ** 2
-    crlb = 0.5 / (snr_sum * curvature)
+    crb = 0.5 / (snr_sum * curvature)
     if n_ants is not None:
         # Going from baseline-based to antenna-based, you score an extra factor
         # determined by np.sum((Vrt.T / s[np.newaxis, :]) ** 2, axis=1).mean()
-        crlb *= 2.0 / n_ants
-    # Collect standard deviations
-    stdevs = np.nanstd(_wrap_angle(slope_estimates - slopes), axis=-1)
-    # Optionally use RMS instead of standard deviation in case of bias
-    # residual = _wrap_angle(slope_estimates - slopes)
-    # stdevs = np.sqrt(np.nanmean(residual * residual, axis=-1))
-    return np.r_[np.sqrt(crlb), stdevs]
+        crb *= 2.0 / n_ants
+    return np.sqrt(crb)
 
 
 def bl_experiment(ampl=FLUX, sefd=SEFD, dump_period=DUMP_PERIOD, n_chans=N_CHANS,
@@ -142,15 +139,17 @@ def bl_experiment(ampl=FLUX, sefd=SEFD, dump_period=DUMP_PERIOD, n_chans=N_CHANS
     slopes *= 0.99 if delay_limit is None else delay_limit / delay_alias
     x = _generate_data(slopes, channel_freqs, ampl, noise_var, window, tec)
     slope_estimates = _estimate_slopes(x, fft_factor, chan_range, window, snr)
-    stdevs = _measure_error(slope_estimates, slopes, snr, n_chans, window)
     # Convert from phase slope in radians/channel to delay in seconds
-    return stdevs * delay_alias / (2 * np.pi)
+    crb = _cramer_rao_bound(snr, n_chans, window) * delay_alias / (2 * np.pi)
+    residuals = _wrap_angle(slope_estimates - slopes) * delay_alias / (2 * np.pi)
+    stdevs = np.nanstd(residuals, axis=-1)
+    return np.r_[crb, stdevs]
 
 
 def ant_experiment(ampl=FLUX, sefd=SEFD, dump_period=DUMP_PERIOD, n_chans=N_CHANS,
-                   sample_rate=SAMPLE_RATE, n_repeats=10, n_ants=15,
+                   sample_rate=SAMPLE_RATE, n_repeats=10, n_ants=N_ANTS,
                    fft_factor=2, window=None, chan_range=slice(None),
-                   delay_limit=None, tec=0):
+                   delay_limit=None, tec=0, results_per_antenna=True):
     channel_freqs, delay_alias, noise_var, snr = _calculate_params(
         sample_rate, n_chans, dump_period, ampl, sefd)
     slopes_per_ant = 2. * np.pi * (np.random.rand(n_repeats, n_ants) - 0.5)
@@ -171,14 +170,23 @@ def ant_experiment(ampl=FLUX, sefd=SEFD, dump_period=DUMP_PERIOD, n_chans=N_CHAN
     slope_estm_per_ant = slope_estm_per_ant.reshape(-1, n_repeats * (n_ants - 1))
     # Add the cal pipeline solver
     x = x.reshape(n_repeats, n_bls, n_chans)
-    slope_estm_k_fit = _estimate_slopes_k_fit(
+    slope_estm_k_fit_per_ant = _estimate_slopes_k_fit(
         x[..., chan_range], baselines, n_ants, channel_freqs[chan_range], delay_alias
     )
-    slope_estm_per_ant = np.vstack((slope_estm_per_ant, slope_estm_k_fit.ravel()))
-    stdevs = _measure_error(slope_estm_per_ant, slopes_per_ant[:, 1:].ravel(),
-                            snr, n_chans, window, n_ants)
+    if results_per_antenna:
+        crb = _cramer_rao_bound(snr, n_chans, window, n_ants)
+        slopes = slopes_per_ant[:, 1:].ravel()
+        slope_estimates = np.vstack((slope_estm_per_ant,
+                                     slope_estm_k_fit_per_ant.ravel()))
+    else:
+        crb = _cramer_rao_bound(snr, n_chans, window)
+        slopes = slopes_per_bl
+        slope_estm_k_fit_per_bl = slope_estm_k_fit_per_ant @ to_baseline.T[1:]
+        slope_estimates = np.vstack((slope_estm_per_bl.reshape(-1, n_repeats * n_bls),
+                                     slope_estm_k_fit_per_bl.ravel()))
     # Convert from phase slope in radians/channel to delay in seconds
-    return stdevs * delay_alias / (2 * np.pi)
+    residuals = _wrap_angle(slope_estimates - slopes) * delay_alias / (2 * np.pi)
+    return crb * delay_alias / (2 * np.pi), residuals
 
 
 def plot_loglog(x, y, k_fit=False):
@@ -247,21 +255,36 @@ fig.savefig('delay_per_bl_realistic.png')
 
 fluxes = np.array([0.1, 0.2, 0.5, 1., 2., 5., 10., 20., 50., 100.])
 delay_std = []
+delay_residuals = []
 for flux in fluxes:
-    delay_std.append(ant_experiment(ampl=flux))
+    crb, residuals = ant_experiment(ampl=flux, results_per_antenna=(RESULTS == 'perant'))
+    # delay_std.append(np.r_[crb, np.nanstd(residuals, axis=-1)])
+    perc25 = np.nanpercentile(residuals, 25, axis=-1)
+    perc75 = np.nanpercentile(residuals, 75, axis=-1)
+    iqr_to_std = 0.741301109253
+    delay_std.append(np.r_[crb, iqr_to_std * (perc75 - perc25)])
+    delay_residuals.append(residuals)
 fig, ax = plot_loglog(fluxes, np.array(delay_std), k_fit=True)
 ax.set_xlabel('Calibrator flux [Jy]')
-ax.set_title(f'Delay estimator performance vs flux (N={N_CHANS})')
-fig.savefig('delay_per_ant_vs_flux.png')
+ax.set_title(f'Delay errors ({RESULTS}, chans={N_CHANS}, ants={N_ANTS})')
+fig.savefig(f'delay_basic_ant{N_ANTS}_chan{N_CHANS}_{RESULTS}.png')
 
 fluxes = np.array([0.1, 0.2, 0.5, 1., 2., 5., 10., 20., 50., 100.])
 delay_std = []
+delay_residuals = []
 for flux in fluxes:
-    delay_std.append(ant_experiment(ampl=flux * flux_shape, sefd=sefd, window=gain,
-                                    chan_range=chan_range, delay_limit=10 / SAMPLE_RATE))
+    crb, residuals = ant_experiment(ampl=flux * flux_shape, sefd=sefd, window=gain,
+                                    chan_range=chan_range, delay_limit=10 / SAMPLE_RATE,
+                                    results_per_antenna=(RESULTS == 'perant'))
+    # delay_std.append(np.r_[crb, np.nanstd(residuals, axis=-1)])
+    perc25 = np.nanpercentile(residuals, 25, axis=-1)
+    perc75 = np.nanpercentile(residuals, 75, axis=-1)
+    iqr_to_std = 0.741301109253
+    delay_std.append(np.r_[crb, iqr_to_std * (perc75 - perc25)])
+    delay_residuals.append(residuals)
 fig, ax = plot_loglog(fluxes, np.array(delay_std), k_fit=True)
 ax.set_xlabel('Calibrator flux [Jy]')
-ax.set_title(f'Realistic delay estimator performance (N={N_CHANS})')
-fig.savefig('delay_per_ant_realistic.png')
+ax.set_title(f'Delay errors ({RESULTS}, chans={N_CHANS}, ants={N_ANTS})')
+fig.savefig(f'delay_realistic_ant{N_ANTS}_chan{N_CHANS}_{RESULTS}.png')
 
 plt.show()
