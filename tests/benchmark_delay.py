@@ -100,12 +100,12 @@ def _estimate_slopes_k_fit(x, baselines, n_ants, channel_freqs, delay_alias):
     cal_weights = np.ones_like(cal_vis, dtype=np.float32)
     slope_estimates = np.zeros((n_repeats, n_ants - 1))
     for m in range(n_repeats):
-       cal_vis[:] = x[m].T[:, np.newaxis, :]
-       cal_weights[:] = 1.0
-       cal_weights[np.abs(cal_vis) == 0.0] = 0.0
-       # The pipeline delays have the opposite sign to the definition
-       k_delays = -k_fit(cal_vis, cal_weights, baselines, channel_freqs)
-       slope_estimates[m] = k_delays[0, 1:] * 2 * np.pi / delay_alias
+        cal_vis[:] = x[m].T[:, np.newaxis, :]
+        cal_weights[:] = 1.0
+        cal_weights[np.abs(cal_vis) == 0.0] = 0.0
+        # The pipeline delays have the opposite sign to the definition
+        k_delays = -k_fit(cal_vis, cal_weights, baselines, channel_freqs)
+        slope_estimates[m] = k_delays[0, 1:] * 2 * np.pi / delay_alias
     return slope_estimates
 
 
