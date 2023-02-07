@@ -64,13 +64,25 @@ def _generate_data(slopes, channel_freqs, ampl, noise_var, window=None, tec=0):
 
     angle = np.outer(n, slopes) + phase + iono
     x = ampl * np.exp(1j * angle.T) + np.sqrt(noise_var / 2) * noise
+    # Add a nasty spike in unflagged region
+    x[:, n_chans // 4] += 10 * n_chans
     if window is not None:
         x *= np.atleast_2d(window)
     return x
 
 
+def _kill_spikes(x, median_factor=10.0):
+    amplitude = np.abs(x)
+    amplitude_threshold = median_factor * np.median(amplitude, axis=-1)
+    spikes = amplitude > amplitude_threshold[:, np.newaxis]
+    y = x.copy()
+    y[spikes] *= 0.0
+    return y
+
+
 def _estimate_slopes(x, fft_factor, chan_range, window, snr):
     n_fft = fft_factor * x.shape[-1]
+    x = _kill_spikes(x)
     estimates = []
     for method in METHODS:
         if method == 'Ludwig':
