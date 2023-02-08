@@ -15,17 +15,17 @@ def pydft(y,ws=None):
 #uses direct fourier transform to subsample sinc function progressively near peak
 #determine remaining delay and unwrap phase
 def pydftdelay(signal):
+    validsignal=np.nonzero(signal!=0.0)[0]
     ws=np.roll(np.linspace(-np.pi,np.pi,len(signal),endpoint=False),len(signal)//2)
     Fsignal=np.abs(np.fft.fft(signal))
     iFsignal=np.argmax(Fsignal)
     x=np.arange(len(signal))
-    w0=ws[iFsignal]-(ws[1]-ws[0])
+    w0=ws[iFsignal]-(ws[1]-ws[0])/2
     w1=ws[iFsignal]+0
-    w2=ws[iFsignal]+(ws[1]-ws[0])
+    w2=ws[iFsignal]+(ws[1]-ws[0])/2
     F0=np.abs(np.sum(signal*np.exp(-1j*x*w0)))#direct fourier transform at this w
     F1=Fsignal[iFsignal]
     F2=np.abs(np.sum(signal*np.exp(-1j*x*w2)))#direct fourier transform at this w
-
     for iterate in range(50):
         if F0>=F1 or F0>F2:
             F2=F1;w2=w1;
