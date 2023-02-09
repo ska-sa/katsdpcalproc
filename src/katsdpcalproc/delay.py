@@ -149,9 +149,10 @@ def fft_secant(x, NFFT=None, epsilon=1e-10, max_iters=100,
         x = x.reshape(-1, x.shape[-1])
     if NFFT is None:
         NFFT = np.shape(x)[-1]
-    _, fft_peak = _fft_abs_peak(x, NFFT)
-    left = _index_to_freq(fft_peak - 0.5, NFFT)
-    right = _index_to_freq(fft_peak + 0.5, NFFT)
+    initial_guess = fft_coarse(x, NFFT)
+    coarse_bin_width = 2 * np.pi / NFFT
+    left = initial_guess - 0.5 * coarse_bin_width
+    right = initial_guess + 0.5 * coarse_bin_width
     freq = _secant_fast(x, left, right, epsilon, max_iters, discard_unconverged)
     if front_shape != ():
         freq = freq.reshape(front_shape)

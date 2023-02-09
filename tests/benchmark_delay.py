@@ -151,8 +151,8 @@ def bl_experiment(ampl=FLUX, sefd=SEFD, dump_period=DUMP_PERIOD, n_chans=N_CHANS
     channel_freqs, delay_alias, noise_var, snr = _calculate_params(
         sample_rate, n_chans, dump_period, ampl, sefd)
     slopes = 2. * np.pi * (np.random.rand(n_repeats) - 0.5)
-    # FFT+secant method does not like phase slopes around +- pi / channel
-    slopes *= 0.99 if delay_limit is None else delay_limit / delay_alias
+    if delay_limit is not None:
+        slopes *= delay_limit / delay_alias
     x = _generate_data(slopes, channel_freqs, ampl, noise_var, window, tec)
     slope_estimates = _estimate_slopes(x, fft_factor, chan_range, window, snr)
     # Convert from phase slope in radians/channel to delay in seconds
@@ -219,6 +219,17 @@ def plot_loglog(x, y, k_fit=False):
     ax.set_ylabel('Delay standard deviation [s]')
     return fig, ax
 
+
+def test_secant_on_steep_slopes():
+    nfft = 2 * N_CHANS
+    steep_slopes = 2 * np.pi * np.array([N_CHANS - 0.45, N_CHANS, N_CHANS + 0.45]) / nfft
+    steep_signals = np.exp(1j * np.outer(steep_slopes, np.arange(N_CHANS)))
+    steep_slope_estimates = fft_secant(steep_signals, nfft)
+    residuals = _wrap_angle(steep_slope_estimates - steep_slopes)
+    np.testing.assert_allclose(residuals, 0.0, atol=1e-10)
+
+
+test_secant_on_steep_slopes()
 
 fluxes = np.array([0.1, 0.2, 0.5, 1., 2., 5., 10., 20., 50., 100.])
 delay_std = []
