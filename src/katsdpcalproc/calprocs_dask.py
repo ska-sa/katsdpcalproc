@@ -25,7 +25,7 @@ def stefcal(rawvis, num_ants, corrprod_lookup, weights=None, ref_ant=0,
             init_gain=None, *args, **kwargs):
     """Solve for antenna gains using StEFCal.
 
-    Refer to :func:`katsdpcal.calprocs.stefcal` for details. This version
+    Refer to :func:`katsdpcalproc.calprocs.stefcal` for details. This version
     expects a dask array for `rawvis`, and optionally for `weights` and
     `init_gain` as well.
     """

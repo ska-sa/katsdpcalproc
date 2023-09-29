@@ -5,9 +5,9 @@ import time
 
 import numpy as np
 
-from katsdpcal import calprocs
+from katsdpcalproc import calprocs
 
-from katsdpcal.solutions import CalSolution, CalSolutionStore
+from katsdpcalproc.solutions import CalSolution, CalSolutionStore
 
 
 def unit(value):
@@ -29,7 +29,7 @@ class TestCalprocs(unittest.TestCase):
 
 
 class TestStefcal(unittest.TestCase):
-    """Tests for :func:`katsdpcal.calprocs.stefcal`."""
+    """Tests for :func:`katsdpcalproc.calprocs.stefcal`."""
     def setUp(self):
         self.random_state = np.random.RandomState(seed=1)
 
@@ -246,7 +246,7 @@ class TestStefcal(unittest.TestCase):
 
 
 class TestWavgFullF(unittest.TestCase):
-    """Tests for :func:`katsdpcal.calprocs.wavg_full_f`"""
+    """Tests for :func:`katsdpcalproc.calprocs.wavg_full_f`"""
     def setUp(self):
         shape = (5, 10, 3, 10)
         self.data = np.ones(shape, np.complex64)
@@ -374,7 +374,7 @@ class TestWavgFlagsF(unittest.TestCase):
 
 
 class TestNormaliseComplex(unittest.TestCase):
-    """Tests for :func:`katsdpcal.calprocs.normalise_complex`"""
+    """Tests for :func:`katsdpcalproc.calprocs.normalise_complex`"""
     def setUp(self):
         shape = (6, 7, 2)
         self.data = np.ones(shape, np.complex64) + 1.j
@@ -432,7 +432,7 @@ class TestNormaliseComplex(unittest.TestCase):
 
 
 class TestKAnt(unittest.TestCase):
-    """Tests for :func:`katsdpcal.calprocs.K_ant'"""
+    """Tests for :func:`katsdpcalproc.calprocs.K_ant'"""
     def test(self):
         ntimes = 3
         nchans = 2
@@ -457,7 +457,7 @@ class TestKAnt(unittest.TestCase):
 
 
 class TestMeasureFlux(unittest.TestCase):
-    """Tests for :func:`katsdpcal.calprocs.measure_flux'"""
+    """Tests for :func:`katsdpcalproc.calprocs.measure_flux'"""
     def setUp(self):
         ntimes = 4
         self.gains1 = np.ones((ntimes, 5), dtype=np.complex64)
@@ -542,7 +542,7 @@ class TestMeasureFlux(unittest.TestCase):
 
 
 class TestAddModelVis(unittest.TestCase):
-    """Tests for :func:`katsdpcal.calprocs.add_model_vis`"""
+    """Tests for :func:`katsdpcalproc.calprocs.add_model_vis`"""
     def test(self):
         shape = (3, 5, 4)
         kant = np.ones(shape, np.complex64)
@@ -563,7 +563,7 @@ class TestAddModelVis(unittest.TestCase):
 
 
 class TestCalcSnr(unittest.TestCase):
-    """Tests for :func:`katsdpcal.calprocs.calc_snr`"""
+    """Tests for :func:`katsdpcalproc.calprocs.calc_snr`"""
     def setUp(self):
         shape = (7, 3, 2)
         self.data = np.ones(shape, np.float32)
@@ -589,7 +589,7 @@ class TestCalcSnr(unittest.TestCase):
 
 
 class TestPoorAntennaFlags(unittest.TestCase):
-    """Tests for :func:`katsdpcal.calprocs.poor_antenna_flags`"""
+    """Tests for :func:`katsdpcalproc.calprocs.poor_antenna_flags`"""
     def test(self):
         nants = 5
         shape = (2, 10, 2, nants*(nants-1)//2)
@@ -621,7 +621,7 @@ class TestPoorAntennaFlags(unittest.TestCase):
 
 
 class TestSnrAntenna(unittest.TestCase):
-    """Tests for :func:`katsdpcal.calprocs.snr_antenna`"""
+    """Tests for :func:`katsdpcalproc.calprocs.snr_antenna`"""
     def setUp(self):
         nants = 5
         self.shape = (2, 10, 2, nants*(nants-1)//2)
@@ -678,7 +678,7 @@ class TestSnrAntenna(unittest.TestCase):
 
 
 class TestFluxDensityModel(unittest.TestCase):
-    """Tests for :class:`katsdpcal.calprocs.FluxDensityModel`"""
+    """Tests for :class:`katsdpcalproc.calprocs.FluxDensityModel`"""
 
     def _test_inputs(self, expected_flux, *args):
         """Tests flux density produced with given parameters or description string"""
@@ -789,7 +789,7 @@ class TestGetReordering(unittest.TestCase):
 
 
 class TestInterpolateSoln(unittest.TestCase):
-    """Tests for :func:`katsdpcal.calprocs.interpolate_soln`"""
+    """Tests for :func:`katsdpcalproc.calprocs.interpolate_soln`"""
     def test(self):
         shape = (4, 2, 5)
         xi = [1, 2, 4, 5]
