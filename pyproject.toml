@@ -5,7 +5,7 @@ readme = "README.md"
 requires-python = ">=3.6"
 license = {file = "LICENSE"}
 authors = [
-        {name = "SARAO DSP team", email = "sdpdev+katsdpcalproc@ska.ac.za"}
+        {name = "SARAO DSP team", email = "sdpdev+katsdpcal@ska.ac.za"}
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

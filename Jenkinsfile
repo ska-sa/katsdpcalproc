@@ -9,4 +9,4 @@ katsdp.setDependencies([
     'ska-sa/katdal/master',
     'ska-sa/katsdptelstate/master'])
 katsdp.standardBuild()
-katsdp.mail('sdpdev+katsdpcalproc@ska.ac.za')
+katsdp.mail('sdpdev+katsdpcal@ska.ac.za')
