@@ -1,12 +1,13 @@
-"""Tests for :mod:`katsdpcal.calprocs_dask`."""
+"""Tests for :mod:`katsdpcalproc.calprocs_dask`."""
 
 import unittest
 
 import numpy as np
 import dask.array as da
 
-from katsdpcal import calprocs, calprocs_dask
-from . import test_calprocs
+from katsdpcalproc import calprocs, calprocs_dask
+
+import test_calprocs
 
 
 def as_dask(arr):
@@ -18,7 +19,7 @@ def unit(value):
 
 
 class TestStefcal(test_calprocs.TestStefcal):
-    """Tests for :func:`katsdpcal.calprocs_dask.stefcal`."""
+    """Tests for :func:`katsdpcalproc.calprocs_dask.stefcal`."""
     def _call_stefcal(self, rawvis, num_ants, corrprod_lookup, weights=None,
                       ref_ant=0, init_gain=None, *args, **kwargs):
         rawvis = da.asarray(rawvis)
@@ -72,7 +73,7 @@ class TestAlignChunks(unittest.TestCase):
 
 
 class TestWavg(unittest.TestCase):
-    """Tests for :func:`katsdpcal.calprocs_dask.wavg`"""
+    """Tests for :func:`katsdpcalproc.calprocs_dask.wavg`"""
     def setUp(self):
         shape = (10, 5, 3, 10)
         self.data = np.ones(shape, np.complex64)
@@ -139,7 +140,7 @@ class TestWavg(unittest.TestCase):
 
 
 class TestWavgFullT(unittest.TestCase):
-    """Tests for :func:`katsdpcal.calprocs_dask.wavg_full_t`"""
+    """Tests for :func:`katsdpcalproc.calprocs_dask.wavg_full_t`"""
     def setUp(self):
         shape = (10, 5, 3, 10)
         self.data = np.ones(shape, np.complex64)
@@ -201,10 +202,10 @@ class TestWavgFullT(unittest.TestCase):
 
 
 class TestWavgFullF(unittest.TestCase):
-    """Tests for :func:`katsdpcal.calprocs_dask.wavg_full_f`
+    """Tests for :func:`katsdpcalproc.calprocs_dask.wavg_full_f`
 
     The tests just compare results against
-    :func:`katsdpcal.calprocs.wavg_full_f` (i.e., the non-dask version),
+    :func:`katsdpcalproc.calprocs.wavg_full_f` (i.e., the non-dask version),
     which is assumed to have its own tests.
     """
     def _test(self, shape, chunks, chanav):
@@ -246,7 +247,7 @@ class TestWavgFullF(unittest.TestCase):
 
 
 class TestWavgAnt(unittest.TestCase):
-    """Tests for :func:`katsdpcal.calprocs_dask.wavg_ant`"""
+    """Tests for :func:`katsdpcalproc.calprocs_dask.wavg_ant`"""
     def setUp(self):
         shape = (10, 5, 3, 10)
         self.data = np.ones(shape, np.complex64)

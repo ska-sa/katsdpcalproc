@@ -1,14 +1,16 @@
-"""Tests for :mod:`katsdpcal.solutions`"""
+"""Tests for :mod:`katsdpcalproc.solutions`"""
 
 import unittest
 
 import numpy as np
 
-from ..solutions import CalSolution, CalSolutionStore, CalSolutionStoreLatest
+from katsdpcalproc.solutions import (
+    CalSolution, CalSolutionStore, CalSolutionStoreLatest
+)
 
 
 class TestCalSolutionStoreLatest(unittest.TestCase):
-    test_cls = CalSolutionStoreLatest
+    make_store = CalSolutionStoreLatest
 
     def setUp(self):
         self.sol1 = CalSolution('G', np.arange(10), 1234.0, 'sol1')
@@ -16,7 +18,7 @@ class TestCalSolutionStoreLatest(unittest.TestCase):
         self.sol3 = CalSolution('G', np.arange(30, 40), 3456.0, 'sol3')
         self.solK = CalSolution('K', np.arange(30, 40), 3456.0, 'solK')
         self.sol4 = CalSolution('G', np.arange(10), 4567.0, 'sol1')
-        self.store = self.test_cls('G')
+        self.store = self.make_store('G')
 
     def test_latest_empty(self):
         self.assertIsNone(self.store.latest)
@@ -39,7 +41,7 @@ class TestCalSolutionStoreLatest(unittest.TestCase):
 
 
 class TestCalSolutionStore(TestCalSolutionStoreLatest):
-    test_cls = CalSolutionStore
+    make_store = CalSolutionStore
 
     def test_get_range(self):
         self.store.add(self.sol2)
