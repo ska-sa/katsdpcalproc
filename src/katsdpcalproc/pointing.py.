@@ -526,9 +526,9 @@ with verify_and_connect(opts) as kat:
             session.get_cal_solutions('G', timeout=300.,
                                       start_time=last_offset_start)
             user_logger.info('Retrieving gains, fitting beams, storing offsets')
-            data_points = get_offset_gains(session, offsets, offset_end_times,
-                                           opts.track_duration)
+            data_points = get_offset_gains(session, offsets, offset_end_times, opts.track_duration)
             beams = fit_primary_beams(session, data_points)
             pointing_offsets = calc_pointing_offsets(session, beams, target,
                                                      middle_time, **weather)
             save_pointing_offsets(session, pointing_offsets, middle_time)
+   
