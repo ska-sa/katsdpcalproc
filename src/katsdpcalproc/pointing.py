@@ -308,7 +308,7 @@ class NotUnixTime(Exception):
 class NotKatpointTarget(Exception):
     pass
 
-def calc_pointing_offsets(ants,middle_time,temperature,humidity,pressure,beams,target):
+def calc_pointing_offsets(ants,middle_time,temperature,humidity,pressure,beams,target,existing_az_el_adjust=np.zeros((len(ants),2))):
     """Calculate pointing offsets per receptor based on primary beam fits.
 
     Parameters
@@ -324,6 +324,9 @@ def calc_pointing_offsets(ants,middle_time,temperature,humidity,pressure,beams,t
         Atmospheric conditions at middle time, used for refraction correction
     ants: A list containing <class: katpoint.Antenna> objects for each antenna 
         used in the observation
+    existing_az_el_adjust: 2D numpy array shape(len(ants),2)
+        Optional; existing (az,el) adjustment of target for each antenna. 
+        Default = np.zeros((len(ants),2))
 
     Returns
     -------
@@ -364,9 +367,10 @@ def calc_pointing_offsets(ants,middle_time,temperature,humidity,pressure,beams,t
         pointing_offset = results[0]
         pointing_offset_std = np.sqrt(1. / results[1])
         # Get existing pointing adjustment
-        az_adjust = telstate[str(ant.name)+'_pos_adjust_pointm_azim']
-        el_adjust = telstate[str(ant.name)+'_pos_adjust_pointm_elev']
+        az_adjust = existing_az_el_adjust[ants.index(ant)][0]
+        el_adjust = existing_az_el_adjust[ants.index(ant)][1]
         existing_adjustment = deg2rad(np.array((az_adjust, el_adjust)))
+  
         # Start with requested (az, el) coordinates, as they apply
         # at the middle time for a moving target
         requested_azel = target.azel(timestamp=middle_time, antenna=ant)
