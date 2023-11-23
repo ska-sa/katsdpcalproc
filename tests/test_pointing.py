@@ -1,3 +1,5 @@
+"Tests for pointing.py"
+
 import katdal
 import katpoint
 import numpy as np
@@ -11,6 +13,7 @@ import pytest
 from katsdpcalproc import pointing
 
 
+## Creating metadata fpr tests
 middle_time=1691795333.43713
 temperature=14.7
 humidity=29.1
@@ -22,20 +25,24 @@ pols=["h"]
 centre_freq=1284000000.0
 bandwidth=856000000.0
 no_channels=1000
+
+## Calculating channel and chunk freqencies
 channel_freqs=centre_freq +(np.arange(no_channels) - no_channels/2)*(bandwidth/no_channels)
 chunk_freqs = channel_freqs.reshape(NUM_CHUNKS, -1).mean(axis=1)
 target=katpoint.Target(body="J1939-6342, radec bfcal single_accumulation, 19:39:25.03, -63:42:45.6")
 
-# Maximum distance of offset from target, in degrees
+## Maximum distance of offset from target, in degrees
 max_extent = 1.0
 num_pointings = 8
-# Build up sequence of pointing offsets running linearly in x and y directions
+## Build up sequence of pointing offsets running linearly in x and y directions
 scan = np.linspace(-max_extent, max_extent, num_pointings // 2)
 offsets_along_x = np.c_[scan, np.zeros_like(scan)]
 offsets_along_y = np.c_[np.zeros_like(scan), scan]
 offsets = np.r_[offsets_along_y, offsets_along_x]
 
+## Creating list of antenna objects
 ants=[katpoint.Antenna('m000','-30:42:39.8','21:26:38.0',1086.6,diameter=15,beamwidth=1.22,pointing_model="0:04:20.6,0,0:01:14.2,0:02:58.5,0:00:05.1,0:00:00.4,0:20:04.1,-0:00:34.5,0,0,-0:03:10.0,0,0,0,0,0,0,0,0,0,0,0",delay_model="-8.264,-207,8.6,212.6,212.6,1"),katpoint.Antenna('m001','-30:42:39.8','21:26:38.0',1086.6,diameter=15,beamwidth=1.22,pointing_model="0:04:15.6,0,0:01:09.2,0:01:58.5,0:00:05.1,0:00:00.4,0:16:04.1,-0:00:34.5,0,0,-0:03:10.0,0,0,0,0,0,0,0,0,0,0,0",delay_model="-8.264,-207,8.6,212.6,212.6,1")]
+
 existing_az_el_adjust=np.zeros((len(ants),2))
 
 ## Creating gains, numpy array shape (no.offsets, no.polarisations, no.antennas)
