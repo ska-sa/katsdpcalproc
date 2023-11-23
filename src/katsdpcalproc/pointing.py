@@ -308,7 +308,7 @@ class NotUnixTime(Exception):
 class NotKatpointTarget(Exception):
     pass
 
-def calc_pointing_offsets(ants,middle_time,temperature,humidity,pressure,beams,target,existing_az_el_adjust=np.zeros((len(ants),2))):
+def calc_pointing_offsets(ants,middle_time,temperature,humidity,pressure,beams,target,existing_az_el_adjust=0):
     """Calculate pointing offsets per receptor based on primary beam fits.
 
     Parameters
@@ -344,7 +344,8 @@ def calc_pointing_offsets(ants,middle_time,temperature,humidity,pressure,beams,t
 
     """
 
-        
+    if existing_az_el_adjust==0:
+        existing_az_el_adjust=np.zeros((len(ants),2))
     if middle_time<16000000:
         raise NotUnixTime("Middle times must be in unix time format")
     if type(target)!= katpoint.Target:
@@ -354,27 +355,24 @@ def calc_pointing_offsets(ants,middle_time,temperature,humidity,pressure,beams,t
     # Iterate over receptors
     for ant in sorted(ants):
         beams_freq = beams.get(ant.name, [])
-
+      
         beams_freq = [b for b in beams_freq if b is not None and b.is_valid]
-
+    
         offsets_freq = np.array([b.center for b in beams_freq])
-
         offsets_freq_std = np.array([b.std_center for b in beams_freq])
 
         weights_freq = 1. / offsets_freq_std ** 2
         results = np.average(offsets_freq, axis=0, weights=weights_freq,returned=True)
-
+        
         pointing_offset = results[0]
         pointing_offset_std = np.sqrt(1. / results[1])
         # Get existing pointing adjustment
         az_adjust = existing_az_el_adjust[ants.index(ant)][0]
         el_adjust = existing_az_el_adjust[ants.index(ant)][1]
         existing_adjustment = deg2rad(np.array((az_adjust, el_adjust)))
-  
         # Start with requested (az, el) coordinates, as they apply
         # at the middle time for a moving target
         requested_azel = target.azel(timestamp=middle_time, antenna=ant)
-
         # Correct for refraction, which becomes the requested value
         # at input of pointing model
         rc = RefractionCorrection()
@@ -382,25 +380,33 @@ def calc_pointing_offsets(ants,middle_time,temperature,humidity,pressure,beams,t
             """Apply refraction correction as at the middle of scan."""
             return [az, rc.apply(el, temperature, pressure, humidity)]
         refracted_azel = np.array(refract(*requested_azel))
+        
         # More stages that apply existing pointing model and/or adjustment
         pointed_azel = np.array(ant.pointing_model.apply(*refracted_azel))
-
+        
         adjusted_azel = pointed_azel + existing_adjustment
+       
         # Convert fitted offset back to spherical (az, el) coordinates
         pointing_offset = deg2rad(np.array(pointing_offset))
+        
         beam_center_azel = target.plane_to_sphere(*pointing_offset,timestamp=middle_time,antenna=ant)
         # Now correct the measured (az, el) for refraction and then apply the
         # existing pointing model and adjustment to get a "raw" measured
         # (az, el) at the output of the pointing model stage
         beam_center_azel = refract(*beam_center_azel)
+        
         beam_center_azel = ant.pointing_model.apply(*beam_center_azel)
+       
         beam_center_azel = np.array(beam_center_azel) + existing_adjustment
+        
         # Make sure the offset is a small angle around 0 degrees
         full_offset_azel = wrap_angle(beam_center_azel - refracted_azel)
+        
         full_adjust_azel = wrap_angle(beam_center_azel - pointed_azel)
         relative_adjust_azel = wrap_angle(beam_center_azel - adjusted_azel)
         # Cheap 'n' cheerful way to convert cross-el uncertainty to azim form
-        offset_azel_std = pointing_offset_std /             np.array([np.cos(refracted_azel[1]), 1.])
+        offset_azel_std = pointing_offset_std / \
+            np.array([np.cos(refracted_azel[1]), 1.])
         # We store all variants of the pointing offset since we have it all
         # at our fingertips here
         point_data = np.r_[rad2deg(refracted_azel), rad2deg(full_offset_azel),
@@ -408,4 +414,3 @@ def calc_pointing_offsets(ants,middle_time,temperature,humidity,pressure,beams,t
                            rad2deg(relative_adjust_azel), offset_azel_std]
         pointing_offsets[ant.name] = point_data
     return(pointing_offsets)
-
