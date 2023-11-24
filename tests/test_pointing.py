@@ -43,7 +43,7 @@ offsets = np.r_[offsets_along_y, offsets_along_x]
 ## Creating list of antenna objects
 ants=[katpoint.Antenna('m000','-30:42:39.8','21:26:38.0',1086.6,diameter=15,beamwidth=1.22,pointing_model="0:04:20.6,0,0:01:14.2,0:02:58.5,0:00:05.1,0:00:00.4,0:20:04.1,-0:00:34.5,0,0,-0:03:10.0,0,0,0,0,0,0,0,0,0,0,0",delay_model="-8.264,-207,8.6,212.6,212.6,1"),katpoint.Antenna('m001','-30:42:39.8','21:26:38.0',1086.6,diameter=15,beamwidth=1.22,pointing_model="0:04:15.6,0,0:01:09.2,0:01:58.5,0:00:05.1,0:00:00.4,0:16:04.1,-0:00:34.5,0,0,-0:03:10.0,0,0,0,0,0,0,0,0,0,0,0",delay_model="-8.264,-207,8.6,212.6,212.6,1")]
 
-existing_az_el_adjust=np.zeros((len(ants),2))
+az_el_adjust=np.zeros((len(ants),2))
 
 ## Creating gains, numpy array shape (no.offsets, no.polarisations, no.antennas)
 weights=np.ones(10)
@@ -92,16 +92,12 @@ def g_o_g(offsets,ants,channel_freqs):
     return np.array(bp_gains3)
 
 
-# In[18]:
-
-
-
 
 bp_gains=g_o_g(offsets,ants,channel_freqs)
-data_points= pointing.get_offset_gains(bp_gains,just_gains,offsets,NUM_CHUNKS,ants,track_duration,centre_freq,bandwidth,no_channels)
+data_points= pointing.get_offset_gains(bp_gains,just_gains,offsets,NUM_CHUNKS,ants,track_duration,centre_freq,bandwidth,no_channels,pols)
 beams=pointing.beam_fit(data_points,NUM_CHUNKS,ants)
    
-pointing_offsets=pointing.calc_pointing_offsets(ants,middle_time,temperature,humidity,pressure,beams,target,existing_az_el_adjust)
+pointing_offsets=pointing.calc_pointing_offsets(ants,middle_time,temperature,humidity,pressure,beams,target,az_el_adjust)
 
 
 
@@ -124,11 +120,11 @@ def test_get_offset_gains_len():
 ## Test that incorrect shape of gains will raise Index Error
 def test_get_offset_gains_shape():
      with pytest.raises(IndexError):
-        pointing.get_offset_gains(bp_gains[0],just_gains[0],offsets,NUM_CHUNKS,ants,track_duration,centre_freq,bandwidth,no_channels)  
+        pointing.get_offset_gains(bp_gains[0],just_gains[0],offsets,NUM_CHUNKS,ants,track_duration,centre_freq,bandwidth,no_channels,pols)  
 ## Raise error if NUM_CHUNKS is not multiple of no_channels
 def test_get_offset_gains_multiple():
-     with pytest.raises(NotMUltipleError):
-        pointing.get_offset_gains(bp_gains[0],just_gains,offsets,3,ants,track_duration,centre_freq,bandwidth,no_channels)  
+     with pytest.raises(pointing.NotMUltipleError):
+        pointing.get_offset_gains(bp_gains[0],just_gains,offsets,3,ants,track_duration,centre_freq,bandwidth,no_channels,pols)  
 ## Test legnth of each data_points element
 def test_get_offset_gains_len2():
     for i in range (0, len(data_points)):
@@ -138,7 +134,7 @@ def test_get_offset_gains_len2():
 ## Test that inputting a float in place of a list for gains raises Type Error
 def test_get_offset_gains_type():
     with pytest.raises(TypeError):
-        pointing.get_offset_gains(9,just_gains,offsets,NUM_CHUNKS,ants,track_duration,centre_freq,bandwidth,no_channels)
+        pointing.get_offset_gains(9,just_gains,offsets,NUM_CHUNKS,ants,track_duration,centre_freq,bandwidth,no_channels,pols)
 ## Testing that the output of beam_fit are of type BeamPatternFit
 def test_beam_fit_type():
     assert len(beams)==len(ants)
@@ -148,12 +144,12 @@ def test_beam_fit_type():
             assert type(beams[i.name][j]) == pointing.BeamPatternFit
 ## Multiple small type errors for calc_pointing_offsets
 def test_calc_pointing_offsets_random():
-    with pytest.raises(NotUnixTime):
-        po=pointing.calc_pointing_offsets(ants,1220,temperature,humidity,pressure,beams,target,existing_az_el_adjust)
+    with pytest.raises(pointing.NotUnixTime):
+        po=pointing.calc_pointing_offsets(ants,1220,temperature,humidity,pressure,beams,target,az_el_adjust)
     with pytest.raises(TypeError):
-        po=pointing.calc_pointing_offsets(ants,'12:20',temperature,humidity,pressure,beams,target,existing_az_el_adjust) 
-    with pytest.raises(NotKatpointTarget):
-        po=pointing.calc_pointing_offsets(ants,middle_time,temperature,humidity,pressure,beams,'target',existing_az_el_adjust) 
+        po=pointing.calc_pointing_offsets(ants,'12:20',temperature,humidity,pressure,beams,target,az_el_adjust) 
+    with pytest.raises(pointing.NotKatpointTarget):
+        po=pointing.calc_pointing_offsets(ants,middle_time,temperature,humidity,pressure,beams,'target',az_el_adjust) 
 ## Test that the legnth of each pointing offset solution =10 (5 sets of (x,y) coordinates)
 def test_calc_pointing_offsets_len():
     assert len(pointing_offsets)==len(ants)
