@@ -25,6 +25,7 @@ import dask.array as da
 class NotMUltipleError(Exception):
     pass
 
+
 def get_offset_gains(bp_gains,gains,offsets,NUM_CHUNKS,ants,track_duration,centre_freq,bandwidth,no_channels,pols):
     
         """Extract gains per pointing offset, per receptor and per frequency chunk.
@@ -46,7 +47,7 @@ def get_offset_gains(bp_gains,gains,offsets,NUM_CHUNKS,ants,track_duration,centr
             antenna used in the observation
         centre_freq, bandwidth, no_channels: floats, centre frequency, bandwidth 
             and number of frequency channels 
-	pols: list, A list containing polarisations, eg, ["h","v"]
+        pols: list, A list containing polarisations, eg, ["h","v"]
 
         Returns
         -------
@@ -55,12 +56,16 @@ def get_offset_gains(bp_gains,gains,offsets,NUM_CHUNKS,ants,track_duration,centr
                 frequency chunk ie. len(data_points)=63, len(data_points[i])=
                 Num_chunks*no.offsets, len(data_points[i][j]=5)
         """
+
+        if no_channels %NUM_CHUNKS != 0:
+            raise NotMUltipleError("NUM_CHUNKS is not a multiple of number of channels")
         ##Calculating chunk frequencies
+
         channel_freqs=centre_freq +(np.arange(no_channels) - no_channels/2)*(bandwidth/no_channels)
+        
         chunk_freqs = channel_freqs.reshape(NUM_CHUNKS, -1).mean(axis=1)
         data_points = {}
-        if bp_gains[0].shape[0] %NUM_CHUNKS != 0:
-            raise NotMUltipleError("NUM_CHUNKS is not a multiple of number of channels")
+        
         for i,e,f in zip(offsets,bp_gains,gains):
             
             for a, ant in enumerate(ants):
@@ -110,10 +115,9 @@ def get_offset_gains(bp_gains,gains,offsets,NUM_CHUNKS,ants,track_duration,centr
                             pol_gain = pol_gain.filled(np.nan)
                             data = data_points.get(a, [])
                             for freq, gain, weight in zip(chunk_freqs, pol_gain, pol_weight):
-                                data.append((i[0], i[1], freq, gain, weight))
+                                data.append((i[0], i[1], freq, gain, 1))
                             data_points[a] = data
         return data_points
-
 
 
 def fwhm_to_sigma(fwhm):
@@ -345,7 +349,7 @@ def calc_pointing_offsets(ants,middle_time,temperature,humidity,pressure,beams,t
 
     """
 
-    if existing_az_el_adjust==None:
+    if type(existing_az_el_adjust)=='NoneType':
         existing_az_el_adjust=np.zeros((len(ants),2))
     if middle_time<16000000:
         raise NotUnixTime("Middle times must be in unix time format")
