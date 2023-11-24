@@ -25,7 +25,7 @@ import dask.array as da
 class NotMUltipleError(Exception):
     pass
 
-def get_offset_gains(bp_gains,gains,offsets,NUM_CHUNKS,ants,track_duration,centre_freq,bandwidth,no_channels):
+def get_offset_gains(bp_gains,gains,offsets,NUM_CHUNKS,ants,track_duration,centre_freq,bandwidth,no_channels,pols):
     
         """Extract gains per pointing offset, per receptor and per frequency chunk.
 
@@ -46,6 +46,7 @@ def get_offset_gains(bp_gains,gains,offsets,NUM_CHUNKS,ants,track_duration,centr
             antenna used in the observation
         centre_freq, bandwidth, no_channels: floats, centre frequency, bandwidth 
             and number of frequency channels 
+	pols: list, A list containing polarisations, eg, ["h","v"]
 
         Returns
         -------
@@ -68,7 +69,7 @@ def get_offset_gains(bp_gains,gains,offsets,NUM_CHUNKS,ants,track_duration,centr
                         pol_weight = np.zeros(NUM_CHUNKS)
                         # Iterate over polarisations (effectively over inputs)
                         
-                        for pol in range(0,2):
+                        for pol in range(0,len(pols)):
                             bp_gain = e[:, pol,a]
                             gain = f[pol,a]
 
@@ -308,7 +309,7 @@ class NotUnixTime(Exception):
 class NotKatpointTarget(Exception):
     pass
 
-def calc_pointing_offsets(ants,middle_time,temperature,humidity,pressure,beams,target,existing_az_el_adjust=0):
+def calc_pointing_offsets(ants,middle_time,temperature,humidity,pressure,beams,target,existing_az_el_adjust=None):
     """Calculate pointing offsets per receptor based on primary beam fits.
 
     Parameters
@@ -344,7 +345,7 @@ def calc_pointing_offsets(ants,middle_time,temperature,humidity,pressure,beams,t
 
     """
 
-    if existing_az_el_adjust==0:
+    if existing_az_el_adjust==None:
         existing_az_el_adjust=np.zeros((len(ants),2))
     if middle_time<16000000:
         raise NotUnixTime("Middle times must be in unix time format")
