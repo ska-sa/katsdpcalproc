@@ -1,5 +1,6 @@
 "Tests for pointing.py"
 
+#### These tests only use 1 polarization axis 
 import katdal
 import katpoint
 import numpy as np
@@ -96,14 +97,7 @@ def g_o_g(offsets,ants,channel_freqs):
 bp_gains=g_o_g(offsets,ants,channel_freqs)
 data_points= pointing.get_offset_gains(bp_gains,just_gains,offsets,NUM_CHUNKS,ants,track_duration,centre_freq,bandwidth,no_channels,pols)
 beams=pointing.beam_fit(data_points,NUM_CHUNKS,ants)
-   
 pointing_offsets=pointing.calc_pointing_offsets(ants,middle_time,temperature,humidity,pressure,beams,target,az_el_adjust)
-
-
-
-
-
-# In[23]:
 
 
 
@@ -111,11 +105,6 @@ pointing_offsets=pointing.calc_pointing_offsets(ants,middle_time,temperature,hum
 ## Test that length of data_points equals the legnth of antenna list
 def test_get_offset_gains_len():
     assert len(data_points)== len(ants)
-
-
-# In[24]:
-
-
 
 ## Test that incorrect shape of gains will raise Index Error
 def test_get_offset_gains_shape():
@@ -157,16 +146,8 @@ def test_calc_pointing_offsets_len():
         assert len(list(pointing_offsets.items())[i][1])== 10
 
 
-
-# In[25]:
-
-
-
 ## Compare widths of simulated primary beams from beam_fit and original beam object
 def test_fit_primary_beams():
-
-    
-    
     def get_widths(offsets,ants,chunk_freqs):
         for i in range(0,len(offsets)):
             compare_ex_width={}
