@@ -14,7 +14,6 @@
 import katdal
 import katpoint
 import numpy as np
-from katsdpcal.plotting import *
 from katdal.spectral_window import SpectralWindow
 from katpoint import (rad2deg, deg2rad, lightspeed, wrap_angle, RefractionCorrection)
 from scikits.fitting import ScatterFit, GaussianFit
