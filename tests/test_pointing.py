@@ -5,7 +5,7 @@ import numpy as np
 import katpoint
 import pytest
 from katsdpcalproc import pointing
-from katpoint import (rad2deg, deg2rad, lightspeed, wrap_angle, RefractionCorrection)
+from katpoint import (rad2deg, lightspeed)
 
 # Creating metadata fpr tests
 middle_time = 1691795333.43713
@@ -21,7 +21,7 @@ bandwidth = 856000000.0
 no_channels = 1000
 
 # Calculating channel and chunk freqencies
-channel_freqs = centre_freq + (np.arange(no_channels) - no_channels/2)*(bandwidth/no_channels)
+channel_freqs = centre_freq + (np.arange(no_channels) - no_channels / 2) * (bandwidth / no_channels)
 chunk_freqs = channel_freqs.reshape(NUM_CHUNKS, -1).mean(axis=1)
 target = katpoint.Target(
     body="J1939-6342, radec bfcal single_accumulation, 19:39:25.03, -63:42:45.6")
@@ -44,16 +44,18 @@ ants = [
         1086.6,
         diameter=15,
         beamwidth=1.22,
-        pointing_model="0:04:20.6,0,0:01:14.2,0:02:58.5,0:00:05.1,0:00:00.4,0:20:04.1,-0:00:34.5,0,0,-0:03:10.0,0,0,0,0,0,0,0,0,0,0,0",
+        pointing_model="""0:04:20.6,0,0:01:14.2,0:02:58.5,0:00:05.1,0:00:00.4,
+                          0:20:04.1,-0:00:34.5,0,0,-0:03:10.0,0,0,0,0,0,0,0,0,0,0,0""",
         delay_model="-8.264,-207,8.6,212.6,212.6,1"),
     katpoint.Antenna(
-            'm001',
-            '-30:42:39.8',
-            '21:26:38.0',
-            1086.6,
-            diameter=15,
-            beamwidth=1.22,
-            pointing_model="0:04:15.6,0,0:01:09.2,0:01:58.5,0:00:05.1,0:00:00.4,0:16:04.1,-0:00:34.5,0,0,-0:03:10.0,0,0,0,0,0,0,0,0,0,0,0",
+        'm001',
+        '-30:42:39.8',
+        '21:26:38.0',
+        1086.6,
+        diameter=15,
+        beamwidth=1.22,
+        pointing_model="""0:04:15.6,0,0:01:09.2,0:01:58.5,0:00:05.1,0:00:00.4,
+                          0:16:04.1,-0:00:34.5,0,0,-0:03:10.0,0,0,0,0,0,0,0,0,0,0,0""",
         delay_model="-8.264,-207,8.6,212.6,212.6,1")]
 
 az_el_adjust = np.zeros((len(ants), 2))
@@ -81,8 +83,8 @@ def g_o_g(offsets, ants, channel_freqs):
                 ex_width = []
                 for a, ant in enumerate(ants):
                     # expected widths for each frequency channel
-                    expected_width = rad2deg(ant.beamwidth * lightspeed /
-                                             channel_freqs[f] / ant.diameter)
+                    expected_width = rad2deg(ant.beamwidth * lightspeed
+                                             / channel_freqs[f] / ant.diameter)
                     # Convert power beamwidth to gain / voltage beamwidth
                     expected_width = np.sqrt(2.0) * expected_width
                     # XXX This assumes we are still using default ant.beamwidth of 1.22
@@ -168,8 +170,8 @@ def test_get_offset_gains_multiple():
 
 def test_get_offset_gains_len2():
     for i in range(0, len(data_points)):
-        assert len(list(data_points.items())[i][1]) == NUM_CHUNKS*len(offsets)
-        for j in range(0, NUM_CHUNKS*len(offsets)):
+        assert len(list(data_points.items())[i][1]) == NUM_CHUNKS * len(offsets)
+        for j in range(0, NUM_CHUNKS * len(offsets)):
             assert len(list(data_points.items())[i][1][j]) == 5
 # Test that inputting a float in place of a list for gains raises Type Error
 
@@ -194,14 +196,14 @@ def test_beam_fit_type():
     assert len(beams) == len(ants)
     for i in ants:
         assert type(beams[i.name][0]) and isinstance(beams[i.name][-1], type(None))
-        for j in range(1, NUM_CHUNKS-1):
+        for j in range(1, NUM_CHUNKS - 1):
             assert isinstance(beams[i.name][j], pointing.BeamPatternFit)
 # Multiple small type errors for calc_pointing_offsets
 
 
 def test_calc_pointing_offsets_random():
     with pytest.raises(pointing.NotUnixTime):
-        po = pointing.calc_pointing_offsets(
+        pointing.calc_pointing_offsets(
             ants,
             1220,
             temperature,
@@ -211,7 +213,7 @@ def test_calc_pointing_offsets_random():
             target,
             az_el_adjust)
     with pytest.raises(TypeError):
-        po = pointing.calc_pointing_offsets(
+        pointing.calc_pointing_offsets(
             ants,
             '12:20',
             temperature,
@@ -221,7 +223,7 @@ def test_calc_pointing_offsets_random():
             target,
             az_el_adjust)
     with pytest.raises(pointing.NotKatpointTarget):
-        po = pointing.calc_pointing_offsets(
+        pointing.calc_pointing_offsets(
             ants,
             middle_time,
             temperature,
@@ -249,8 +251,8 @@ def test_fit_primary_beams():
 
                 for chunk in range(0, NUM_CHUNKS):
 
-                    expected_width = rad2deg(ant.beamwidth * lightspeed /
-                                             chunk_freqs[chunk] / ant.diameter)
+                    expected_width = rad2deg(ant.beamwidth * lightspeed
+                                             / chunk_freqs[chunk] / ant.diameter)
                     # Convert power beamwidth to gain / voltage beamwidth
                     expected_width = np.sqrt(2.0) * expected_width
                     # XXX This assumes we are still using default ant.beamwidth of 1.22
@@ -268,6 +270,6 @@ def test_fit_primary_beams():
     j = pointing.beam_fit(data_points, NUM_CHUNKS, ants)
 
     # Comparing output of beam_fit to the original beam object
-    for z in range(1, NUM_CHUNKS-1):
+    for z in range(1, NUM_CHUNKS - 1):
         for x in j.keys():
             assert j[x][z].expected_width == pytest.approx(comp_widths[x][z], abs=0.0001)
