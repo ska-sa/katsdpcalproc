@@ -1,4 +1,4 @@
-#! /usr/bin/env python
+##! /usr/bin/env python
 #
 # Updated refrence pointing script
 # This script contains low level functions to calculate
@@ -14,6 +14,7 @@ import katpoint
 import numpy as np
 from katpoint import (rad2deg, deg2rad, lightspeed, wrap_angle, RefractionCorrection)
 from scikits.fitting import ScatterFit, GaussianFit
+
 
 # Test that NUM_CHUNKS is a multiple of number of frequency channels
 class NotMUltipleError(Exception):
@@ -55,7 +56,8 @@ def get_offset_gains(bp_gains, gains, offsets, NUM_CHUNKS, ants,
         raise NotMUltipleError("NUM_CHUNKS is not a multiple of number of channels")
     # Calculating chunk frequencies
 
-    channel_freqs = centre_freq + (np.arange(no_channels) - no_channels/2)*(bandwidth/no_channels)
+    channel_freqs = centre_freq + ((np.arange(no_channels) - no_channels / 2)
+                                   * (bandwidth / no_channels))
 
     chunk_freqs = channel_freqs.reshape(NUM_CHUNKS, -1).mean(axis=1)
     data_points = {}
@@ -89,13 +91,6 @@ def get_offset_gains(bp_gains, gains, offsets, NUM_CHUNKS, ants,
                 abs_gain_N = (~abs_gain_chunked.mask).sum(axis=1)
                 # Generate standard precision weights based on empirical stdev
                 abs_gain_weight = abs_gain_N / abs_gain_var
-                # Prepare some debugging output
-                stats_mean = ' '.join("%4.2f" % (m,) for m in
-                                      abs_gain_mean.filled(np.nan))
-                stats_std = ' '.join("%4.2f" % (s,) for s in
-                                     abs_gain_std.filled(np.nan))
-                stats_N = ' '.join("%4d" % (n,) for n in abs_gain_N)
-                bp_mean = np.nanmean(np.abs(bp_gain))
                 # Blend new gains into existing via weighted averaging.
                 # XXX We currently combine HH and VV gains at the start to get
                 # Stokes I gain but in future it might be better to fit
@@ -272,17 +267,12 @@ def beam_fit(data_points, NUM_CHUNKS, ants):
         # Iterate over frequency chunks but discard typically dodgy band edges
         for chunk in range(1, NUM_CHUNKS - 1):
             chunk_data = data[:, chunk]
-
-            is_valid = np.nonzero(~np.isnan(chunk_data['gain']) &
-                                  (chunk_data['weight'] > 0.))[0]
+            is_valid = np.nonzero(~np.isnan(chunk_data['gain']) & (chunk_data['weight'] > 0.))[0]
             chunk_data = chunk_data[is_valid]
             if len(chunk_data) == 0:
                 continue
-            expected_width = rad2deg(
-                ant.beamwidth *
-                lightspeed /
-                chunk_data['freq'][0] /
-                ant.diameter)
+            expected_width = rad2deg(ant.beamwidth * lightspeed
+                                     / chunk_data['freq'][0] / ant.diameter)
             expected_width = np.sqrt(2.0) * expected_width
             # XXX This assumes we are still using default ant.beamwidth of 1.22
             # and also handles larger effective dish diameter in H direction
@@ -295,8 +285,6 @@ def beam_fit(data_points, NUM_CHUNKS, ants):
                 beam.fit(x, y, std_y)
             except TypeError:
                 continue
-            beamwidth_norm = beam.width / np.array(expected_width)
-            center_norm = beam.center / beam.std_center
             # Store beam per frequency chunk and per receptor
             beams_freq = beams.get(ant.name, [None] * NUM_CHUNKS)
             beams_freq[chunk] = beam
