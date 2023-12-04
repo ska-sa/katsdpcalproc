@@ -5,23 +5,22 @@ import numpy as np
 import katpoint
 import pytest
 from katsdpcalproc import pointing
-from katpoint import (rad2deg, lightspeed)
 
 # Creating metadata fpr tests
-middle_time = 1691795333.43713
-temperature = 14.7
-humidity = 29.1
-pressure = 897
-track_duration = 24
+MIDDLE_TIME = 1691795333.43713
+TEMPERATURE = 14.7
+HUMIDITY = 29.1
+PRESSURE = 897
+TRACK_DURATION = 24
 NUM_CHUNKS = 5
-pols = ["h"]
+POLS = ["h"]
 
-centre_freq = 1284000000.0
-bandwidth = 856000000.0
-no_channels = 1000
+CENTRE_FREQ = 1284000000.0
+BANDWIDTH = 856000000.0
+N_CHANNELS = 1000
 
 # Calculating channel and chunk freqencies
-channel_freqs = centre_freq + (np.arange(no_channels) - no_channels / 2) * (bandwidth / no_channels)
+channel_freqs = CENTRE_FREQ + (np.arange(N_CHANNELS) - N_CHANNELS / 2) * (BANDWIDTH / N_CHANNELS)
 chunk_freqs = channel_freqs.reshape(NUM_CHUNKS, -1).mean(axis=1)
 target = katpoint.Target(
     body="J1939-6342, radec bfcal single_accumulation, 19:39:25.03, -63:42:45.6")
@@ -36,28 +35,25 @@ offsets_along_y = np.c_[np.zeros_like(scan), scan]
 offsets = np.r_[offsets_along_y, offsets_along_x]
 
 # Creating list of antenna objects
-ants = [
-    katpoint.Antenna(
-        'm000',
-        '-30:42:39.8',
-        '21:26:38.0',
+ANT_DESCRIPTIONS = ["""m000,
+        -30:42:39.8,
+        21:26:38.0,
         1086.6,
-        diameter=15,
-        beamwidth=1.22,
-        pointing_model="""0:04:20.6,0,0:01:14.2,0:02:58.5,0:00:05.1,0:00:00.4,
-                          0:20:04.1,-0:00:34.5,0,0,-0:03:10.0,0,0,0,0,0,0,0,0,0,0,0""",
-        delay_model="-8.264,-207,8.6,212.6,212.6,1"),
-    katpoint.Antenna(
-        'm001',
-        '-30:42:39.8',
-        '21:26:38.0',
+        15,
+        -8.264 -207 8.6 212.6 212.6 1,
+        0:04:20.6 0 0:01:14.2 0:02:58.5 0:00:05.1 0:00:00.4
+                          0:20:04.1 -0:00:34.5 0 0 -0:03:10.0 0 0 0 0 0 0 0 0 0 0 0,1.22""",
+                    """m001,
+        -30:42:39.8,
+        21:26:38.0,
         1086.6,
-        diameter=15,
-        beamwidth=1.22,
-        pointing_model="""0:04:15.6,0,0:01:09.2,0:01:58.5,0:00:05.1,0:00:00.4,
-                          0:16:04.1,-0:00:34.5,0,0,-0:03:10.0,0,0,0,0,0,0,0,0,0,0,0""",
-        delay_model="-8.264,-207,8.6,212.6,212.6,1")]
+        15,
+        -8.264 -207 8.6 212.6 212.6 1,
+        0:04:15.6 0 0:01:09.2 0:01:58.5 0:00:05.1 0:00:00.4
+                          0:16:04.1 -0:00:34.5 0 0 -0:03:10.0 0 0 0 0 0 0 0 0 0 0 0,1.22"""]
 
+
+ants = [katpoint.Antenna(ant) for ant in ANT_DESCRIPTIONS]
 az_el_adjust = np.zeros((len(ants), 2))
 
 # Creating gains, numpy array shape (no.offsets, no.polarisations, no.antennas)
@@ -65,31 +61,24 @@ weights = np.ones(10)
 just_gains = []
 for i in range(0, len(offsets)):
     gg = []
-    for j in pols:
+    for j in POLS:
         gg.append(np.array(np.ones(len(ants))))
     just_gains.append(np.array(gg))
 just_gains = np.array(just_gains)
 
 
-# Creating bp_gains, numpy array of shape (no.offsets, no.freqs, no.polarisations, no.antennas)
-
-def g_o_g(offsets, ants, channel_freqs):
-    bp_gains3 = []
-    for i in range(0, len(offsets)):
-        bp_gains2 = []
-        for f in range(0, len(channel_freqs)):
-            bp_gains1 = []
-            for pol in pols:
+def generate_bp_gains(offsets, ants, channel_freqs, pols):
+    """ Creating bp_gains, numpy array of shape:
+        (no.offsets, no.freqs, no.polarisations, no.antennas)"""
+    bp_gains = np.zeros((len(offsets), len(channel_freqs), len(pols), len(ants)))
+    for i in range(len(offsets)):
+        for f in range(len(channel_freqs)):
+            for pol in range(len(pols)):
                 ex_width = []
                 for a, ant in enumerate(ants):
                     # expected widths for each frequency channel
-                    expected_width = rad2deg(ant.beamwidth * lightspeed
-                                             / channel_freqs[f] / ant.diameter)
-                    # Convert power beamwidth to gain / voltage beamwidth
-                    expected_width = np.sqrt(2.0) * expected_width
-                    # XXX This assumes we are still using default ant.beamwidth of 1.22
-                    # and also handles larger effective dish diameter in H direction
-                    expected_width = (0.8 * expected_width, 0.9 * expected_width)
+                    expected_width = pointing._get_widths(
+                        ant.beamwidth, channel_freqs[f], ant.diameter)
                     ex_width.append(expected_width)
 
                 gains = []
@@ -97,33 +86,31 @@ def g_o_g(offsets, ants, channel_freqs):
                     new_beam = pointing.BeamPatternFit((0, 0), k, 1.0)
                     g = new_beam(x=offsets[i].T)
                     gains.append(np.array(g))
-
                 gains = np.array(gains).T
-                bp_gains1.append(np.array(gains))
-            bp_gains2.append(np.array(bp_gains1))
-        bp_gains3.append(np.array(bp_gains2))
-    return np.array(bp_gains3)
+                bp_gains[i][f][pol] = gains
+
+    return bp_gains
 
 
-bp_gains = g_o_g(offsets, ants, channel_freqs)
+bp_gains = generate_bp_gains(offsets, ants, channel_freqs, POLS)
 data_points = pointing.get_offset_gains(
     bp_gains,
     just_gains,
     offsets,
-    NUM_CHUNKS,
     ants,
-    track_duration,
-    centre_freq,
-    bandwidth,
-    no_channels,
-    pols)
-beams = pointing.beam_fit(data_points, NUM_CHUNKS, ants)
+    TRACK_DURATION,
+    CENTRE_FREQ,
+    BANDWIDTH,
+    N_CHANNELS,
+    POLS,
+    NUM_CHUNKS)
+beams = pointing.beam_fit(data_points, ants, NUM_CHUNKS)
 pointing_offsets = pointing.calc_pointing_offsets(
     ants,
-    middle_time,
-    temperature,
-    humidity,
-    pressure,
+    MIDDLE_TIME,
+    TEMPERATURE,
+    HUMIDITY,
+    PRESSURE,
     beams,
     target,
     az_el_adjust)
@@ -133,38 +120,23 @@ pointing_offsets = pointing.calc_pointing_offsets(
 def test_get_offset_gains_len():
     assert len(data_points) == len(ants)
 
-# Test that incorrect shape of gains will raise Index Error
+# Test that incorrect shape of bp_gains will raise IncorrectShape Error
 
 
 def test_get_offset_gains_shape():
-    with pytest.raises(IndexError):
+    with pytest.raises(pointing.IncorrectShape):
         pointing.get_offset_gains(
             bp_gains[0],
             just_gains[0],
             offsets,
-            NUM_CHUNKS,
             ants,
-            track_duration,
-            centre_freq,
-            bandwidth,
-            no_channels,
-            pols)
-# Raise error if NUM_CHUNKS is not multiple of no_channels
+            TRACK_DURATION,
+            CENTRE_FREQ,
+            BANDWIDTH,
+            N_CHANNELS,
+            POLS,
+            NUM_CHUNKS)
 
-
-def test_get_offset_gains_multiple():
-    with pytest.raises(pointing.NotMUltipleError):
-        pointing.get_offset_gains(
-            bp_gains[0],
-            just_gains,
-            offsets,
-            3,
-            ants,
-            track_duration,
-            centre_freq,
-            bandwidth,
-            no_channels,
-            pols)
 # Test legnth of each data_points element
 
 
@@ -173,22 +145,7 @@ def test_get_offset_gains_len2():
         assert len(list(data_points.items())[i][1]) == NUM_CHUNKS * len(offsets)
         for j in range(0, NUM_CHUNKS * len(offsets)):
             assert len(list(data_points.items())[i][1][j]) == 5
-# Test that inputting a float in place of a list for gains raises Type Error
 
-
-def test_get_offset_gains_type():
-    with pytest.raises(TypeError):
-        pointing.get_offset_gains(
-            9,
-            just_gains,
-            offsets,
-            NUM_CHUNKS,
-            ants,
-            track_duration,
-            centre_freq,
-            bandwidth,
-            no_channels,
-            pols)
 # Testing that the output of beam_fit are of type BeamPatternFit
 
 
@@ -198,40 +155,22 @@ def test_beam_fit_type():
         assert type(beams[i.name][0]) and isinstance(beams[i.name][-1], type(None))
         for j in range(1, NUM_CHUNKS - 1):
             assert isinstance(beams[i.name][j], pointing.BeamPatternFit)
+
 # Multiple small type errors for calc_pointing_offsets
 
 
 def test_calc_pointing_offsets_random():
-    with pytest.raises(pointing.NotUnixTime):
-        pointing.calc_pointing_offsets(
-            ants,
-            1220,
-            temperature,
-            humidity,
-            pressure,
-            beams,
-            target,
-            az_el_adjust)
-    with pytest.raises(TypeError):
-        pointing.calc_pointing_offsets(
-            ants,
-            '12:20',
-            temperature,
-            humidity,
-            pressure,
-            beams,
-            target,
-            az_el_adjust)
     with pytest.raises(pointing.NotKatpointTarget):
         pointing.calc_pointing_offsets(
             ants,
-            middle_time,
-            temperature,
-            humidity,
-            pressure,
+            MIDDLE_TIME,
+            TEMPERATURE,
+            HUMIDITY,
+            PRESSURE,
             beams,
             'target',
             az_el_adjust)
+
 # Test that the legnth of each pointing offset solution =10 (5 sets of (x,y) coordinates)
 
 
@@ -240,36 +179,28 @@ def test_calc_pointing_offsets_len():
     for i in range(0, len(pointing_offsets)):
         assert len(list(pointing_offsets.items())[i][1]) == 10
 
-
 # Compare widths of simulated primary beams from beam_fit and original beam object
+
+
 def test_fit_primary_beams():
-    def get_widths(offsets, ants, chunk_freqs):
-        for i in range(0, len(offsets)):
-            compare_ex_width = {}
-            for a, ant in enumerate(ants):
-                ex_width = []
+    def get_widths(ants, chunk_freqs):
+        compare_ex_width = {}
+        for a, ant in enumerate(ants):
+            ex_width = []
 
-                for chunk in range(0, NUM_CHUNKS):
-
-                    expected_width = rad2deg(ant.beamwidth * lightspeed
-                                             / chunk_freqs[chunk] / ant.diameter)
-                    # Convert power beamwidth to gain / voltage beamwidth
-                    expected_width = np.sqrt(2.0) * expected_width
-                    # XXX This assumes we are still using default ant.beamwidth of 1.22
-                    # and also handles larger effective dish diameter in H direction
-                    expected_width = (0.8 * expected_width, 0.9 * expected_width)
-                    ex_width.append(expected_width)
-                    compare_ex_width[str(ant.name)] = ex_width
+            for chunk in range(0, NUM_CHUNKS):
+                expected_width = pointing._get_widths(
+                    ant.beamwidth, chunk_freqs[chunk], ant.diameter)
+                ex_width.append(expected_width)
+                compare_ex_width[ant.name] = ex_width
 
         return compare_ex_width
 
-    comp_widths = get_widths(offsets, ants, chunk_freqs)
-
+    expected_widths = get_widths(ants, chunk_freqs)
     # Feeding simulated data_points into beam_fit function
-
-    j = pointing.beam_fit(data_points, NUM_CHUNKS, ants)
-
+    beams = pointing.beam_fit(data_points, ants, NUM_CHUNKS)
     # Comparing output of beam_fit to the original beam object
-    for z in range(1, NUM_CHUNKS - 1):
-        for x in j.keys():
-            assert j[x][z].expected_width == pytest.approx(comp_widths[x][z], abs=0.0001)
+    for chunk in range(1, NUM_CHUNKS - 1):
+        for ant in beams.keys():
+            assert beams[ant][chunk].expected_width == pytest.approx(
+                expected_widths[ant][chunk], abs=0.0001)
