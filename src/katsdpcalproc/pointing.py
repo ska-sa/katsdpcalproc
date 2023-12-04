@@ -1,4 +1,3 @@
-##! /usr/bin/env python
 #
 # Updated refrence pointing script
 # This script contains low level functions to calculate
@@ -16,72 +15,71 @@ from katpoint import (rad2deg, deg2rad, lightspeed, wrap_angle, RefractionCorrec
 from scikits.fitting import ScatterFit, GaussianFit
 
 
-# Test that NUM_CHUNKS is a multiple of number of frequency channels
-class NotMUltipleError(Exception):
+class IncorrectShape(Exception):
     pass
 
+# Test that num_chunks is a multiple of number of frequency channels
 
-def get_offset_gains(bp_gains, gains, offsets, NUM_CHUNKS, ants,
-                     track_duration, centre_freq, bandwidth, no_channels, pols):
+
+def get_offset_gains(bp_gains, gains, offsets, ants, track_duration,
+                     centre_freq, bandwidth, n_channels, pols, num_chunks=16):
     """Extract gains per pointing offset, per receptor and per frequency chunk.
 
     Parameters
     ----------
-    bp_gains : a list containing a numpy array of shape (no.channels,
-        no.polarizations,no.antennas) for each pointing offset *N*, ie.
-        for N pointing offsets, len(bp_gains)=N.
-    gains : a list containing a numpy array of shape
-        (no.polarizations,no.antennas) for each pointing offset *N*,
-        ie. for N pointing offsets, len(gains)=N.
-    offsets : list containing the requested (x, y) pointing offsets
-        relative to target, in degrees.
-    track_duration : float, Duration of each pointing track, in seconds
-    NUM_CHUNKS: Group the frequency channels into this many sections to
+    bp_gains : :class: 'numpy.array'
+        Numpy array of shape (n_offsets, n_channels, n_polarizations, n_antennas)
+        containing bandpass gains
+    gains : :class: 'numpy.array'
+        Numpy array of shape (n_offsets, n_polarizations, n_antennas)
+        containing gains
+    offsets : :class: 'list'
+        list of requested (x, y) pointing offsets co-ordinates relative to target,
+        in degrees.
+    ants: list of :class: 'katpoint.Antenna'
+        A list of antenna objects for fitted beams
+    track_duration : :class: 'float',
+        Duration of each pointing track, in seconds
+    centre_freq, bandwidth, n_channels: :class: 'float'
+        centre frequency, bandwidth and number of channels
+    pols: :class: 'list'
+        A list containing polarisations, eg, ["h","v"]
+    num_chunks: :class: 'float'
+        Group the frequency channels into this many sections to
         obtain pointing fits (default =16)
-    ants: A list containing <class: katpoint.Antenna> objects for each
-        antenna used in the observation
-    centre_freq, bandwidth, no_channels: floats, centre frequency, bandwidth
-        and number of frequency channels
-    pols: list, A list containing polarisations, eg, ["h","v"]
 
     Returns
     -------
-    data_points : dict mapping receptor index to (x, y, freq, gain, weight) seq
-            Complex gains per receptor, as multiple records per offset and
-            frequency chunk ie. len(data_points)=63, len(data_points[i])=
-            Num_chunks*no.offsets, len(data_points[i][j]=5)
+    data_points : :class: 'dict'
+        dict mapping receptor index to (x, y, freq, gain, weight) seq
+        Complex gains per receptor, as multiple records per offset and
+        frequency chunk ie. len(data_points)=63, len(data_points[i])=
+        num_chunks*n_offsets, len(data_points[i][j]=5)
     """
-
-    if no_channels % NUM_CHUNKS != 0:
-        raise NotMUltipleError("NUM_CHUNKS is not a multiple of number of channels")
+    if bp_gains.shape != (len(offsets), n_channels, len(pols), len(ants)):
+        raise IncorrectShape("""bp_gains must have shape (n_offsets, n_channels,
+                             n_polarizations, n_antennas)""")
     # Calculating chunk frequencies
-
-    channel_freqs = centre_freq + ((np.arange(no_channels) - no_channels / 2)
-                                   * (bandwidth / no_channels))
-
-    chunk_freqs = channel_freqs.reshape(NUM_CHUNKS, -1).mean(axis=1)
+    channel_freqs = centre_freq + ((np.arange(bp_gains.shape[1]) - bp_gains.shape[1] / 2)
+                                   * (bandwidth / bp_gains.shape[1]))
+    chunk_freqs = channel_freqs.reshape(num_chunks, -1).mean(axis=1)
     data_points = {}
-
-    for i, e, f in zip(offsets, bp_gains, gains):
-
+    for offset, offset_bp_gain, offset_gain in zip(offsets, bp_gains, gains):
         for a, ant in enumerate(ants):
-
-            pol_gain = np.zeros(NUM_CHUNKS)
-            pol_weight = np.zeros(NUM_CHUNKS)
+            pol_gain = np.zeros(num_chunks)
+            pol_weight = np.zeros(num_chunks)
             # Iterate over polarisations (effectively over inputs)
-
             for pol in range(0, len(pols)):
-                bp_gain = e[:, pol, a]
-                gain = f[pol, a]
-
+                bp_gain = offset_bp_gain[:, pol, a]
+                gain = offset_gain[pol, a]
                 if bp_gain is None or gain is None:
                     continue
-
                 masked_gain = np.ma.masked_invalid(bp_gain * gain)
-                abs_gain_chunked = np.abs(masked_gain).reshape(NUM_CHUNKS, -1)
+                abs_gain_chunked = np.abs(masked_gain).reshape(num_chunks, -1)
                 abs_gain_mean = abs_gain_chunked.mean(axis=1)
                 abs_gain_std = abs_gain_chunked.std(axis=1)
                 abs_gain_var = abs_gain_std.filled(np.inf) ** 2
+                # Replace any zero variance with the smallest non-zero variance
                 zero_var = abs_gain_var == 0.
                 if all(zero_var):
                     abs_gain_var = np.ones_like(abs_gain_var) * np.inf
@@ -104,7 +102,7 @@ def get_offset_gains(bp_gains, gains, offsets, NUM_CHUNKS, ants,
                 pol_gain = pol_gain.filled(np.nan)
                 data = data_points.get(a, [])
                 for freq, gain, weight in zip(chunk_freqs, pol_gain, pol_weight):
-                    data.append((i[0], i[1], freq, gain, 1))
+                    data.append((offset[0], offset[1], freq, gain, weight))
                 data_points[a] = data
     return data_points
 
@@ -180,7 +178,6 @@ class BeamPatternFit(ScatterFit):
         self.center = self._interp.mean
         self.width = sigma_to_fwhm(self._interp.std)
         self.height = self._interp.height
-
         self.expected_width = width
         # Initial guess for radius of first null
         # XXX: POTENTIAL TWEAK
@@ -236,23 +233,37 @@ class BeamPatternFit(ScatterFit):
         """
         return self._interp(x)
 
+# Helper function to calculate expected width
 
-def beam_fit(data_points, NUM_CHUNKS, ants):
+
+def _get_widths(beamwidth, freqs, diameter):
+    expected_width = rad2deg(beamwidth * lightspeed
+                             / freqs / diameter)
+    expected_width = np.sqrt(2.0) * expected_width
+    # XXX This assumes we are still using default ant.beamwidth of 1.22
+    # and also handles larger effective dish diameter in H direction
+    expected_width = (0.8 * expected_width, 0.9 * expected_width)
+    return expected_width
+
+
+def beam_fit(data_points, ants, num_chunks=16):
     """Fit primary beams to receptor gains obtained at various offset pointings.
 
     Parameters
     ----------
 
-    data_points : dict mapping receptor index to (x, y, freq, gain, weight) seq
-        Complex gains per receptor, as multiple records per offset and frequency
-    NUM_CHUNKS: Group the frequency channels into this many sections to obtain
+    data_points : :class: 'dict'
+        dict mapping receptor index to (x, y, freq, gain, weight) seq
+        Complex gains per receptor, as multiple records per offset and
+        frequency chunk
+    ants: list of :class: 'katpoint.Antenna'
+        A list of antenna objects for fitted beams
+    num_chunks: :class: 'float'
+        Group the frequency channels into this many sections to obtain
         pointing fits (default =16)
-    ants: A list containing <class: katpoint.Antenna> objects for each antenna
-        used in the observation
-
     Returns
     -------
-    beams : dict mapping receptor name to list of :class:`BeamPatternFit`
+    beams : dictionary mapping receptor name to list of :class:`BeamPatternFit`
         Fitted primary beams, per receptor and per frequency chunk
 
     """
@@ -261,22 +272,18 @@ def beam_fit(data_points, NUM_CHUNKS, ants):
     for a in data_points:
         data = np.rec.fromrecords(data_points[a], names='x,y,freq,gain,weight')
 
-        data = data.reshape(-1, NUM_CHUNKS)
+        data = data.reshape(-1, num_chunks)
 
         ant = ants[a]
         # Iterate over frequency chunks but discard typically dodgy band edges
-        for chunk in range(1, NUM_CHUNKS - 1):
+        for chunk in range(1, num_chunks - 1):
             chunk_data = data[:, chunk]
             is_valid = np.nonzero(~np.isnan(chunk_data['gain']) & (chunk_data['weight'] > 0.))[0]
             chunk_data = chunk_data[is_valid]
             if len(chunk_data) == 0:
                 continue
-            expected_width = rad2deg(ant.beamwidth * lightspeed
-                                     / chunk_data['freq'][0] / ant.diameter)
-            expected_width = np.sqrt(2.0) * expected_width
-            # XXX This assumes we are still using default ant.beamwidth of 1.22
-            # and also handles larger effective dish diameter in H direction
-            expected_width = (0.8 * expected_width, 0.9 * expected_width)
+            # expected widths for each frequency channel
+            expected_width = _get_widths(ant.beamwidth, chunk_data['freq'][0], ant.diameter)
             beam = BeamPatternFit((0., 0.), expected_width, 1.0)
             x = np.c_[chunk_data['x'], chunk_data['y']].T
             y = chunk_data['gain']
@@ -286,17 +293,13 @@ def beam_fit(data_points, NUM_CHUNKS, ants):
             except TypeError:
                 continue
             # Store beam per frequency chunk and per receptor
-            beams_freq = beams.get(ant.name, [None] * NUM_CHUNKS)
+            beams_freq = beams.get(ant.name, [None] * num_chunks)
             beams_freq[chunk] = beam
             beams[ant.name] = beams_freq
     return beams
 
 
-# Test that middle time is in unix timestamp format
-class NotUnixTime(Exception):
-    pass
 # Check that target is a katpoint.Target object
-
 
 class NotKatpointTarget(Exception):
     pass
@@ -308,20 +311,20 @@ def calc_pointing_offsets(ants, middle_time, temperature, humidity, pressure,
 
     Parameters
     ----------
-    beams : dict mapping receptor name to list of :class:`BeamPatternFit`
+    ants: list of :class: 'katpoint.Antenna'
+        A list of antenna objects for fitted beams
+    middle_time : :class: 'float'
+        Unix timestamp at the middle of sequence of offset pointings, used to
+        find the mean location of a moving target (and reference for weather)
+    temperature, humidity, pressure : :class: 'float'
+        Atmospheric conditions at middle time, used for refraction correction
+    beams : dictionary mapping receptor name to list of :class:`BeamPatternFit`
         Fitted primary beams, per receptor and per frequency chunk
     target : :class:`katpoint.Target` object
         The target on which offset pointings were done
-    middle_time : float
-        Unix timestamp at the middle of sequence of offset pointings, used to
-        find the mean location of a moving target (and reference for weather)
-    temperature, pressure, humidity : float
-        Atmospheric conditions at middle time, used for refraction correction
-    ants: A list containing <class: katpoint.Antenna> objects for each antenna
-        used in the observation
-    existing_az_el_adjust: 2D numpy array shape(len(ants),2)
-        Optional; existing (az,el) adjustment of target for each antenna.
-        Default = np.zeros((len(ants),2))
+    existing_az_el_adjust: :class: 'numpy.array'
+        Numpy array shape(len(ants),2) of existing (az,el) adjustment of target for
+        each antenna. Default = np.zeros((len(ants),2))
 
     Returns
     -------
@@ -339,10 +342,8 @@ def calc_pointing_offsets(ants, middle_time, temperature, humidity, pressure,
 
     """
 
-    if isinstance(existing_az_el_adjust, type(None)):
+    if existing_az_el_adjust is None:
         existing_az_el_adjust = np.zeros((len(ants), 2))
-    if middle_time < 16000000:
-        raise NotUnixTime("Middle times must be in unix time format")
     if not isinstance(target, katpoint.Target):
         raise NotKatpointTarget("Not a katpoint target object")
 
@@ -350,15 +351,14 @@ def calc_pointing_offsets(ants, middle_time, temperature, humidity, pressure,
     # Iterate over receptors
     for ant in sorted(ants):
         beams_freq = beams.get(ant.name, [])
-
         beams_freq = [b for b in beams_freq if b is not None and b.is_valid]
-
+        if not beams_freq:
+            continue
         offsets_freq = np.array([b.center for b in beams_freq])
         offsets_freq_std = np.array([b.std_center for b in beams_freq])
-
         weights_freq = 1. / offsets_freq_std ** 2
+        # Do weighted average of offsets over frequency chunks
         results = np.average(offsets_freq, axis=0, weights=weights_freq, returned=True)
-
         pointing_offset = results[0]
         pointing_offset_std = np.sqrt(1. / results[1])
         # Get existing pointing adjustment
@@ -376,29 +376,21 @@ def calc_pointing_offsets(ants, middle_time, temperature, humidity, pressure,
             """Apply refraction correction as at the middle of scan."""
             return [az, rc.apply(el, temperature, pressure, humidity)]
         refracted_azel = np.array(refract(*requested_azel))
-
         # More stages that apply existing pointing model and/or adjustment
         pointed_azel = np.array(ant.pointing_model.apply(*refracted_azel))
-
         adjusted_azel = pointed_azel + existing_adjustment
-
         # Convert fitted offset back to spherical (az, el) coordinates
         pointing_offset = deg2rad(np.array(pointing_offset))
-
         beam_center_azel = target.plane_to_sphere(
             *pointing_offset, timestamp=middle_time, antenna=ant)
         # Now correct the measured (az, el) for refraction and then apply the
         # existing pointing model and adjustment to get a "raw" measured
         # (az, el) at the output of the pointing model stage
         beam_center_azel = refract(*beam_center_azel)
-
         beam_center_azel = ant.pointing_model.apply(*beam_center_azel)
-
         beam_center_azel = np.array(beam_center_azel) + existing_adjustment
-
         # Make sure the offset is a small angle around 0 degrees
         full_offset_azel = wrap_angle(beam_center_azel - refracted_azel)
-
         full_adjust_azel = wrap_angle(beam_center_azel - pointed_azel)
         relative_adjust_azel = wrap_angle(beam_center_azel - adjusted_azel)
         # Cheap 'n' cheerful way to convert cross-el uncertainty to azim form
@@ -410,4 +402,4 @@ def calc_pointing_offsets(ants, middle_time, temperature, humidity, pressure,
                            rad2deg(full_adjust_azel),
                            rad2deg(relative_adjust_azel), offset_azel_std]
         pointing_offsets[ant.name] = point_data
-    return (pointing_offsets)
+    return pointing_offsets
