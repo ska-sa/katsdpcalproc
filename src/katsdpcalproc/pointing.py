@@ -9,7 +9,6 @@
 # Ludwig Schwardt & Tasmiyah Rawoot
 #
 
-import katpoint
 import numpy as np
 from katpoint import (rad2deg, deg2rad, lightspeed, wrap_angle, RefractionCorrection)
 from scikits.fitting import ScatterFit, GaussianFit
@@ -234,7 +233,7 @@ def _voltage_beamwidths(beamwidth_factor, frequency, dish_diameter):
     Parameters
     ----------
 
-    beamwidth_factor : float  
+    beamwidth_factor : float
         Power beamwidth of antenna
     frquency : float
         Frequency at which to calculate volatge beamwidth
@@ -245,7 +244,7 @@ def _voltage_beamwidths(beamwidth_factor, frequency, dish_diameter):
     expected_width : sequence of 2 floats, or float
         Initial guess of single beamwidth for both dimensions, or 2-element
         beamwidth vector, expressed as FWHM in units of target coordinates
-        
+
     """
     expected_width = rad2deg(beamwidth_factor * lightspeed
                              / frequency / dish_diameter)
