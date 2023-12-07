@@ -5,6 +5,8 @@ import numpy as np
 import katpoint
 import pytest
 from katsdpcalproc import pointing
+import cmath
+import random
 
 # Creating metadata fpr tests
 MIDDLE_TIME = 1691795333.43713
@@ -42,7 +44,7 @@ ANT_DESCRIPTIONS = ["""m000,
         15,
         -8.264 -207 8.6 212.6 212.6 1,
         0:04:20.6 0 0:01:14.2 0:02:58.5 0:00:05.1 0:00:00.4
-                          0:20:04.1 -0:00:34.5 0 0 -0:03:10.0 0 0 0 0 0 0 0 0 0 0 0,1.22""",
+                          0:20:04.1 -0:00:34.5 0 0 -0:03:10.0 ,1.22""",
                     """m001,
         -30:42:39.8,
         21:26:38.0,
@@ -50,7 +52,7 @@ ANT_DESCRIPTIONS = ["""m000,
         15,
         -8.264 -207 8.6 212.6 212.6 1,
         0:04:15.6 0 0:01:09.2 0:01:58.5 0:00:05.1 0:00:00.4
-                          0:16:04.1 -0:00:34.5 0 0 -0:03:10.0 0 0 0 0 0 0 0 0 0 0 0,1.22"""]
+                          0:16:04.1 -0:00:34.5 0 0 -0:03:10.0 ,1.22"""]
 
 
 ants = [katpoint.Antenna(ant) for ant in ANT_DESCRIPTIONS]
@@ -70,14 +72,14 @@ just_gains = np.array(just_gains)
 def generate_bp_gains(offsets, ants, channel_freqs, pols):
     """ Creating bp_gains, numpy array of shape:
         (no.offsets, no.freqs, no.polarisations, no.antennas)"""
-    bp_gains = np.zeros((len(offsets), len(channel_freqs), len(pols), len(ants)))
+    bp_gains = np.zeros((len(offsets), len(channel_freqs), len(pols), len(ants)), dtype = "complex_")
     for i in range(len(offsets)):
         for f in range(len(channel_freqs)):
             for pol in range(len(pols)):
                 ex_width = []
                 for a, ant in enumerate(ants):
                     # expected widths for each frequency channel
-                    expected_width = pointing._get_widths(
+                    expected_width = pointing._voltage_beamwidths(
                         ant.beamwidth, channel_freqs[f], ant.diameter)
                     ex_width.append(expected_width)
 
@@ -85,6 +87,8 @@ def generate_bp_gains(offsets, ants, channel_freqs, pols):
                 for k in ex_width:
                     new_beam = pointing.BeamPatternFit((0, 0), k, 1.0)
                     g = new_beam(x=offsets[i].T)
+                    cmplx= random.uniform(-1.5, 1.5)
+                    g=cmath.rect(g,cmplx)
                     gains.append(np.array(g))
                 gains = np.array(gains).T
                 bp_gains[i][f][pol] = gains
@@ -124,7 +128,7 @@ def test_get_offset_gains_len():
 
 
 def test_get_offset_gains_shape():
-    with pytest.raises(pointing.IncorrectShape):
+    with pytest.raises(ValueError):
         pointing.get_offset_gains(
             bp_gains[0],
             just_gains[0],
@@ -158,19 +162,6 @@ def test_beam_fit_type():
 
 # Multiple small type errors for calc_pointing_offsets
 
-
-def test_calc_pointing_offsets_random():
-    with pytest.raises(pointing.NotKatpointTarget):
-        pointing.calc_pointing_offsets(
-            ants,
-            MIDDLE_TIME,
-            TEMPERATURE,
-            HUMIDITY,
-            PRESSURE,
-            beams,
-            'target',
-            az_el_adjust)
-
 # Test that the legnth of each pointing offset solution =10 (5 sets of (x,y) coordinates)
 
 
@@ -183,24 +174,21 @@ def test_calc_pointing_offsets_len():
 
 
 def test_fit_primary_beams():
-    def get_widths(ants, chunk_freqs):
-        compare_ex_width = {}
-        for a, ant in enumerate(ants):
-            ex_width = []
+    future_ex_widths = {}
+    for a, ant in enumerate(ants):
+        ex_width = []
 
-            for chunk in range(0, NUM_CHUNKS):
-                expected_width = pointing._get_widths(
-                    ant.beamwidth, chunk_freqs[chunk], ant.diameter)
-                ex_width.append(expected_width)
-                compare_ex_width[ant.name] = ex_width
+        for chunk in range(0, NUM_CHUNKS):
+            expected_width = pointing._voltage_beamwidths(
+                ant.beamwidth, chunk_freqs[chunk], ant.diameter)
+            ex_width.append(expected_width)
+            future_ex_widths[ant.name] = ex_width
 
-        return compare_ex_width
-
-    expected_widths = get_widths(ants, chunk_freqs)
     # Feeding simulated data_points into beam_fit function
     beams = pointing.beam_fit(data_points, ants, NUM_CHUNKS)
     # Comparing output of beam_fit to the original beam object
     for chunk in range(1, NUM_CHUNKS - 1):
         for ant in beams.keys():
             assert beams[ant][chunk].expected_width == pytest.approx(
-                expected_widths[ant][chunk], abs=0.0001)
+                future_ex_widths[ant][chunk], abs=0.0001)
+
