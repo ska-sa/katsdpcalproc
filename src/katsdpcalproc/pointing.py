@@ -52,7 +52,7 @@ def get_offset_gains(bp_gains, gains, offsets, ants, track_duration,
         num_chunks*n_offsets, len(data_points[i][j]=5)
     """
     if bp_gains.shape != (len(offsets), n_channels, len(pols), len(ants)):
-        raise VlaueError("""bp_gains must have shape (n_offsets, n_channels,
+        raise ValueError("""bp_gains must have shape (n_offsets, n_channels,
                              n_polarizations, n_antennas)""")
     # Calculating chunk frequencies
     channel_freqs = centre_freq + ((np.arange(bp_gains.shape[1]) - bp_gains.shape[1] / 2)
