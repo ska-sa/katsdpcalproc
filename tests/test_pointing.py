@@ -72,7 +72,7 @@ just_gains = np.array(just_gains)
 def generate_bp_gains(offsets, ants, channel_freqs, pols):
     """ Creating bp_gains, numpy array of shape:
         (no.offsets, no.freqs, no.polarisations, no.antennas)"""
-    bp_gains = np.zeros((len(offsets), len(channel_freqs), len(pols), len(ants)), dtype = "complex_")
+    bp_gains = np.zeros((len(offsets), len(channel_freqs), len(pols), len(ants)), dtype="complex_")
     for i in range(len(offsets)):
         for f in range(len(channel_freqs)):
             for pol in range(len(pols)):
@@ -87,8 +87,8 @@ def generate_bp_gains(offsets, ants, channel_freqs, pols):
                 for k in ex_width:
                     new_beam = pointing.BeamPatternFit((0, 0), k, 1.0)
                     g = new_beam(x=offsets[i].T)
-                    cmplx= random.uniform(-1.5, 1.5)
-                    g=cmath.rect(g,cmplx)
+                    cmplx = random.uniform(-1.5, 1.5)
+                    g = cmath.rect(g, cmplx)
                     gains.append(np.array(g))
                 gains = np.array(gains).T
                 bp_gains[i][f][pol] = gains
@@ -191,4 +191,3 @@ def test_fit_primary_beams():
         for ant in beams.keys():
             assert beams[ant][chunk].expected_width == pytest.approx(
                 future_ex_widths[ant][chunk], abs=0.0001)
-
