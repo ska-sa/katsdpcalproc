@@ -17,12 +17,12 @@ TRACK_DURATION = 24
 NUM_CHUNKS = 5
 POLS = ["h"]
 
-CENTRE_FREQ = 1284000000.0
+CENTER_FREQ = 1284000000.0
 BANDWIDTH = 856000000.0
 N_CHANNELS = 1000
 
 # Calculating channel and chunk freqencies
-channel_freqs = CENTRE_FREQ + (np.arange(N_CHANNELS) - N_CHANNELS / 2) * (BANDWIDTH / N_CHANNELS)
+channel_freqs = CENTER_FREQ + (np.arange(N_CHANNELS) - N_CHANNELS / 2) * (BANDWIDTH / N_CHANNELS)
 chunk_freqs = channel_freqs.reshape(NUM_CHUNKS, -1).mean(axis=1)
 target = katpoint.Target(
     body="J1939-6342, radec bfcal single_accumulation, 19:39:25.03, -63:42:45.6")
@@ -59,20 +59,18 @@ ants = [katpoint.Antenna(ant) for ant in ANT_DESCRIPTIONS]
 az_el_adjust = np.zeros((len(ants), 2))
 
 # Creating gains, numpy array shape (no.offsets, no.polarisations, no.antennas)
-weights = np.ones(10)
-just_gains = []
-for i in range(0, len(offsets)):
-    gg = []
-    for j in POLS:
-        gg.append(np.array(np.ones(len(ants))))
-    just_gains.append(np.array(gg))
-just_gains = np.array(just_gains)
+just_gains = np.ones((len(offsets), len(POLS), len(ants)), dtype=np.complex64)
 
 
-def generate_bp_gains(offsets, ants, channel_freqs, pols):
+def generate_bp_gains(offsets, ants, channel_freqs, pols, beam_center=(0.5, 0.5)):
     """ Creating bp_gains, numpy array of shape:
         (no.offsets, no.freqs, no.polarisations, no.antennas)"""
-    bp_gains = np.zeros((len(offsets), len(channel_freqs), len(pols), len(ants)), dtype="complex_")
+    bp_gains = np.zeros(
+        (len(offsets),
+         len(channel_freqs),
+         len(pols),
+         len(ants)),
+        dtype=np.complex64)
     for i in range(len(offsets)):
         for f in range(len(channel_freqs)):
             for pol in range(len(pols)):
@@ -85,7 +83,7 @@ def generate_bp_gains(offsets, ants, channel_freqs, pols):
 
                 gains = []
                 for k in ex_width:
-                    new_beam = pointing.BeamPatternFit((0, 0), k, 1.0)
+                    new_beam = pointing.BeamPatternFit(beam_center, k, 1.0)
                     g = new_beam(x=offsets[i].T)
                     cmplx = random.uniform(-1.5, 1.5)
                     g = cmath.rect(g, cmplx)
@@ -103,7 +101,7 @@ data_points = pointing.get_offset_gains(
     offsets,
     ants,
     TRACK_DURATION,
-    CENTRE_FREQ,
+    CENTER_FREQ,
     BANDWIDTH,
     N_CHANNELS,
     POLS,
@@ -124,7 +122,7 @@ pointing_offsets = pointing.calc_pointing_offsets(
 def test_get_offset_gains_len():
     assert len(data_points) == len(ants)
 
-# Test that incorrect shape of bp_gains will raise IncorrectShape Error
+# Test that incorrect shape of bp_gains will ValueError
 
 
 def test_get_offset_gains_shape():
@@ -135,7 +133,7 @@ def test_get_offset_gains_shape():
             offsets,
             ants,
             TRACK_DURATION,
-            CENTRE_FREQ,
+            CENTER_FREQ,
             BANDWIDTH,
             N_CHANNELS,
             POLS,
@@ -145,9 +143,9 @@ def test_get_offset_gains_shape():
 
 
 def test_get_offset_gains_len2():
-    for i in range(0, len(data_points)):
+    for i in range(len(data_points)):
         assert len(list(data_points.items())[i][1]) == NUM_CHUNKS * len(offsets)
-        for j in range(0, NUM_CHUNKS * len(offsets)):
+        for j in range(NUM_CHUNKS * len(offsets)):
             assert len(list(data_points.items())[i][1][j]) == 5
 
 # Testing that the output of beam_fit are of type BeamPatternFit
@@ -156,7 +154,7 @@ def test_get_offset_gains_len2():
 def test_beam_fit_type():
     assert len(beams) == len(ants)
     for i in ants:
-        assert type(beams[i.name][0]) and isinstance(beams[i.name][-1], type(None))
+        assert beams[i.name][0] is None and beams[i.name][-1] is None
         for j in range(1, NUM_CHUNKS - 1):
             assert isinstance(beams[i.name][j], pointing.BeamPatternFit)
 
@@ -167,27 +165,35 @@ def test_beam_fit_type():
 
 def test_calc_pointing_offsets_len():
     assert len(pointing_offsets) == len(ants)
-    for i in range(0, len(pointing_offsets)):
+    for i in range(len(pointing_offsets)):
         assert len(list(pointing_offsets.items())[i][1]) == 10
 
 # Compare widths of simulated primary beams from beam_fit and original beam object
 
 
 def test_fit_primary_beams():
-    future_ex_widths = {}
+    expected_widths = {}
+    compare_beam_center = {}
     for a, ant in enumerate(ants):
         ex_width = []
+        beam_center = []
 
-        for chunk in range(0, NUM_CHUNKS):
+        for chunk in range(NUM_CHUNKS):
             expected_width = pointing._voltage_beamwidths(
                 ant.beamwidth, chunk_freqs[chunk], ant.diameter)
             ex_width.append(expected_width)
-            future_ex_widths[ant.name] = ex_width
+            expected_widths[ant.name] = ex_width
+            beam = pointing.BeamPatternFit((0.5, 0.5), expected_width, 1.0)
+            beam_center.append(beam)
+            compare_beam_center[ant.name] = beam_center
 
     # Feeding simulated data_points into beam_fit function
     beams = pointing.beam_fit(data_points, ants, NUM_CHUNKS)
     # Comparing output of beam_fit to the original beam object
+    # Testing the expected beam center and comparing expected widths
     for chunk in range(1, NUM_CHUNKS - 1):
         for ant in beams.keys():
             assert beams[ant][chunk].expected_width == pytest.approx(
-                future_ex_widths[ant][chunk], abs=0.0001)
+                expected_widths[ant][chunk], abs=0.0001)
+            assert beams[ant][chunk].center == pytest.approx(
+                compare_beam_center[ant][chunk].center, abs=0.001)
