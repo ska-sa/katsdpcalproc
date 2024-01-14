@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_offset_gains(bp_gains, gains, offsets, ants, track_duration,
-                     centre_freq, bandwidth, n_channels, pols, num_chunks=16):
+                     center_freq, bandwidth, n_channels, pols, num_chunks=16):
     """Extract gains per pointing offset, per receptor and per frequency chunk.
 
     Parameters
@@ -37,8 +37,8 @@ def get_offset_gains(bp_gains, gains, offsets, ants, track_duration,
         A list of antenna objects for fitted beams
     track_duration : float,
         Duration of each pointing track, in seconds
-    centre_freq, bandwidth, n_channels: floats
-        centre frequency, bandwidth and number of channels
+    center_freq, bandwidth : float
+        center frequency, bandwidth and number of channels
     n_channels : int
         Number of channels
     pols : list of strings
@@ -58,7 +58,7 @@ def get_offset_gains(bp_gains, gains, offsets, ants, track_duration,
         raise ValueError(
             "bp_gains must have shape (n_offsets, n_channels, n_polarizations, n_antennas)")
     # Calculating chunk frequencies
-    channel_freqs = centre_freq + ((np.arange(bp_gains.shape[1]) - bp_gains.shape[1] / 2)
+    channel_freqs = center_freq + ((np.arange(bp_gains.shape[1]) - bp_gains.shape[1] / 2)
                                    * (bandwidth / bp_gains.shape[1]))
     chunk_freqs = channel_freqs.reshape(num_chunks, -1).mean(axis=1)
     data_points = {}
@@ -335,8 +335,6 @@ def beam_fit(data_points, ants, num_chunks=16, beam_center=(0.5, 0.5)):
     return beams
 
 
-# Check that target is a katpoint.Target object
-
 def calc_pointing_offsets(ants, middle_time, temperature, humidity, pressure,
                           beams, target, existing_az_el_adjust=None):
     """Calculate pointing offsets per receptor based on primary beam fits.
@@ -436,13 +434,8 @@ def calc_pointing_offsets(ants, middle_time, temperature, humidity, pressure,
                            rad2deg(full_adjust_azel),
                            rad2deg(relative_adjust_azel), offset_azel_std]
         pointing_offsets[ant.name] = point_data
-        try:
-            offsets = pointing_offsets[ant.name].copy()
-        except KeyError:
-            logger.warn('%s had no valid primary beam fitted', ant.name)
-        else:
-            # Display all offsets in arcminutes
-            offsets[2:] *= 60.
-            logger.info("%s (%+6.2f, %5.2f) deg -> (%+7.2f', %+7.2f')",
-                        ant.name, *offsets[[0, 1, 6, 7]])
+        offsets = point_data.copy()
+        offsets[2:] *= 60.
+        logger.debug("%s (%+6.2f, %5.2f) deg -> (%+7.2f', %+7.2f')",
+                     ant.name, *offsets[[0, 1, 6, 7]])
     return pointing_offsets

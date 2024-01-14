@@ -1,6 +1,5 @@
 "Tests for pointing.py"
 
-# These tests only use 1 polarization axis
 import numpy as np
 import katpoint
 import pytest
@@ -15,6 +14,7 @@ HUMIDITY = 29.1
 PRESSURE = 897
 TRACK_DURATION = 24
 NUM_CHUNKS = 5
+# TODO These tests only use 1 polarization axis
 POLS = ["h"]
 
 CENTER_FREQ = 1284000000.0
@@ -118,14 +118,13 @@ pointing_offsets = pointing.calc_pointing_offsets(
     az_el_adjust)
 
 
-# Test that length of data_points equals the legnth of antenna list
 def test_get_offset_gains_len():
+    """Test that length of data_points equals the legnth of antenna list"""
     assert len(data_points) == len(ants)
-
-# Test that incorrect shape of bp_gains will ValueError
 
 
 def test_get_offset_gains_shape():
+    """Test that incorrect shape of bp_gains will ValueError"""
     with pytest.raises(ValueError):
         pointing.get_offset_gains(
             bp_gains[0],
@@ -139,39 +138,35 @@ def test_get_offset_gains_shape():
             POLS,
             NUM_CHUNKS)
 
-# Test legnth of each data_points element
-
 
 def test_get_offset_gains_len2():
+    """Test legnth of each data_points element"""
     for i in range(len(data_points)):
         assert len(list(data_points.items())[i][1]) == NUM_CHUNKS * len(offsets)
         for j in range(NUM_CHUNKS * len(offsets)):
             assert len(list(data_points.items())[i][1][j]) == 5
 
-# Testing that the output of beam_fit are of type BeamPatternFit
-
 
 def test_beam_fit_type():
+    """Testing that the output of beam_fit are of type BeamPatternFit"""
     assert len(beams) == len(ants)
     for i in ants:
         assert beams[i.name][0] is None and beams[i.name][-1] is None
         for j in range(1, NUM_CHUNKS - 1):
             assert isinstance(beams[i.name][j], pointing.BeamPatternFit)
 
-# Multiple small type errors for calc_pointing_offsets
-
-# Test that the legnth of each pointing offset solution =10 (5 sets of (x,y) coordinates)
-
 
 def test_calc_pointing_offsets_len():
+    """Test that the legnth of each pointing offset solution
+       =10 (5 sets of (x,y) coordinates)"""
     assert len(pointing_offsets) == len(ants)
     for i in range(len(pointing_offsets)):
         assert len(list(pointing_offsets.items())[i][1]) == 10
 
-# Compare widths of simulated primary beams from beam_fit and original beam object
-
 
 def test_fit_primary_beams():
+    """Compare widths and beam center of simulated primary beams
+       from beam_fit and original beam object"""
     expected_widths = {}
     compare_beam_center = {}
     for a, ant in enumerate(ants):
