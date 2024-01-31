@@ -1,82 +1,80 @@
-#! /usr/bin/env python
 #
-# Perform a collection of offset pointings on the nearest pointing calibrator.
-# Obtain interferometric gain solutions from the pipeline.
-# Fit primary beams to the gains and calculate pointing offsets from them.
-# Store pointing offsets in telstate.
+# Updated refrence pointing script
+# This script contains low level functions to calculate
+# offsets of a reference pointing observation
+# The following low-level functions are used to calculate the offsets:
+# Extract gains per pointing offset, per receptor and per frequency chunk.
+# Fit primary beams to the gains
+# Calculate offsets from fitted beams
+# Ludwig Schwardt & Tasmiyah Rawoot
 #
-# Ludwig Schwardt
-# 2 May 2017
-#
-
-import time
 
 import numpy as np
-from katcorelib.observe import (standard_script_options, verify_and_connect,
-                                collect_targets, start_session, user_logger,
-                                CalSolutionsUnavailable)
-from katpoint import (rad2deg, deg2rad, lightspeed, wrap_angle,
-                      RefractionCorrection)
+from katpoint import (rad2deg, deg2rad, lightspeed, wrap_angle, RefractionCorrection)
 from scikits.fitting import ScatterFit, GaussianFit
+import logging
 
 
-# Group the frequency channels into this many sections to obtain pointing fits
-NUM_CHUNKS = 16
+logger = logging.getLogger(__name__)
 
 
-class NoTargetsUpError(Exception):
-    """No targets are above the horizon at the start of the observation."""
-
-
-def get_offset_gains(session, offsets, offset_end_times, track_duration):
+def get_offset_gains(bp_gains, gains, offsets, ants, track_duration,
+                     center_freq, bandwidth, n_channels, pols, num_chunks=16):
     """Extract gains per pointing offset, per receptor and per frequency chunk.
 
     Parameters
     ----------
-    session : :class:`katcorelib.observe.CaptureSession` object
-        The active capture session
-    offsets : sequence of *N* pairs of float (i.e. shape (*N*, 2))
-        Requested (x, y) pointing offsets relative to target, in degrees
-    offset_end_times : sequence of *N* floats
-        Unix timestamp at the end of each pointing track
-    track_duration : float
+    bp_gains : numpy.array
+        Numpy array of shape (n_offsets, n_channels, n_polarizations, n_antennas)
+        containing bandpass gains
+    gains : numpy.array
+        Numpy array of shape (n_offsets, n_polarizations, n_antennas)
+        containing gains
+    offsets : list of sequences of 2 floats
+        list of requested (x, y) pointing offsets co-ordinates relative to target,
+        in degrees.
+    ants : list of :class:`katpoint.Antenna`
+        A list of antenna objects for fitted beams
+    track_duration : float,
         Duration of each pointing track, in seconds
+    center_freq, bandwidth : float
+        center frequency, bandwidth and number of channels
+    n_channels : int
+        Number of channels
+    pols : list of strings
+        A list containing polarisations, eg, ["h","v"]
+    num_chunks : int, optional
+        Group the frequency channels into this many sections to
+        obtain pointing fits
 
     Returns
     -------
     data_points : dict mapping receptor index to (x, y, freq, gain, weight) seq
-        Complex gains per receptor, as multiple records per offset and frequency
-
+        Complex gains per receptor, as multiple records per offset and
+        frequency chunk ie. len(data_points)=63, len(data_points[i])=
+        num_chunks*n_offsets, len(data_points[i][j]=5)
     """
-    cal_channel_freqs = session.get_cal_channel_freqs()
-    chunk_freqs = cal_channel_freqs.reshape(NUM_CHUNKS, -1).mean(axis=1)
-    pols = session.telstate['cal_pol_ordering']
+    if bp_gains.shape != (len(offsets), n_channels, len(pols), len(ants)):
+        raise ValueError(
+            "bp_gains must have shape (n_offsets, n_channels, n_polarizations, n_antennas)")
+    # Calculating chunk frequencies
+    channel_freqs = center_freq + ((np.arange(bp_gains.shape[1]) - bp_gains.shape[1] / 2)
+                                   * (bandwidth / bp_gains.shape[1]))
+    chunk_freqs = channel_freqs.reshape(num_chunks, -1).mean(axis=1)
     data_points = {}
-    # Iterate over offset pointings
-    for offset, offset_end in zip(offsets, offset_end_times):
-        offset_start = offset_end - track_duration
-        # Obtain interferometric gains per pointing from the cal pipeline
-        try:
-            bp_gains = session.get_cal_solutions('B', start_time=offset_start,
-                                                 end_time=offset_end)
-            gains = session.get_cal_solutions('G', start_time=offset_start,
-                                              end_time=offset_end)
-        except CalSolutionsUnavailable as err:
-            user_logger.warning('Skipping offset %s: %s', offset, err)
-            continue
-        # Iterate over receptors
-        for a, ant in enumerate(session.observers):
-            pol_gain = np.zeros(NUM_CHUNKS)
-            pol_weight = np.zeros(NUM_CHUNKS)
+    for offset, offset_bp_gain, offset_gain in zip(offsets, bp_gains, gains):
+        for a, ant in enumerate(ants):
+            pol_gain = np.zeros(num_chunks)
+            pol_weight = np.zeros(num_chunks)
             # Iterate over polarisations (effectively over inputs)
-            for pol in pols:
-                inp = ant.name + pol
-                bp_gain = bp_gains.get(inp)
-                gain = gains.get(inp)
+            for pol in range(len(pols)):
+                inp = ant.name + pols[pol]
+                bp_gain = offset_bp_gain[:, pol, a]
+                gain = offset_gain[pol, a]
                 if bp_gain is None or gain is None:
                     continue
                 masked_gain = np.ma.masked_invalid(bp_gain * gain)
-                abs_gain_chunked = np.abs(masked_gain).reshape(NUM_CHUNKS, -1)
+                abs_gain_chunked = np.abs(masked_gain).reshape(num_chunks, -1)
                 abs_gain_mean = abs_gain_chunked.mean(axis=1)
                 abs_gain_std = abs_gain_chunked.std(axis=1)
                 abs_gain_var = abs_gain_std.filled(np.inf) ** 2
@@ -98,12 +96,12 @@ def get_offset_gains(session, offsets, offset_end_times, track_duration):
                                      abs_gain_std.filled(np.nan))
                 stats_N = ' '.join("%4d" % (n,) for n in abs_gain_N)
                 bp_mean = np.nanmean(np.abs(bp_gain))
-                user_logger.debug("%s %s %4.2f mean | %s",
-                                  tuple(offset), inp, np.abs(gain), stats_mean)
-                user_logger.debug("%s %s %4.2f std  | %s",
-                                  tuple(offset), inp, bp_mean, stats_std)
-                user_logger.debug("%s %s      N    | %s",
-                                  tuple(offset), inp, stats_N)
+                logger.debug("%s %s %4.2f mean | %s",
+                             tuple(offset), inp, np.abs(gain), stats_mean)
+                logger.debug("%s %s %4.2f std  | %s",
+                             tuple(offset), inp, bp_mean, stats_std)
+                logger.debug("%s %s      N    | %s",
+                             tuple(offset), inp, stats_N)
                 # Blend new gains into existing via weighted averaging.
                 # XXX We currently combine HH and VV gains at the start to get
                 # Stokes I gain but in future it might be better to fit
@@ -119,9 +117,6 @@ def get_offset_gains(session, offsets, offset_end_times, track_duration):
                 for freq, gain, weight in zip(chunk_freqs, pol_gain, pol_weight):
                     data.append((offset[0], offset[1], freq, gain, weight))
                 data_points[a] = data
-    if not data_points:
-        raise CalSolutionsUnavailable("No complete gain solutions found in "
-                                      "telstate for any offset")
     return data_points
 
 
@@ -187,6 +182,7 @@ class BeamPatternFit(ScatterFit):
         Standard error of beam height, only set after :func:`fit`
 
     """
+
     def __init__(self, center, width, height):
         ScatterFit.__init__(self)
         if not np.isscalar(width):
@@ -195,7 +191,6 @@ class BeamPatternFit(ScatterFit):
         self.center = self._interp.mean
         self.width = sigma_to_fwhm(self._interp.std)
         self.height = self._interp.height
-
         self.expected_width = width
         # Initial guess for radius of first null
         # XXX: POTENTIAL TWEAK
@@ -252,16 +247,50 @@ class BeamPatternFit(ScatterFit):
         return self._interp(x)
 
 
-def fit_primary_beams(session, data_points):
+def _voltage_beamwidths(beamwidth_factor, frequency, dish_diameter):
+    """Helper function to calculate expected width
+    Parameters
+    ----------
+
+    beamwidth_factor : float
+        Power beamwidth of antenna
+    frequency : float
+        Frequency at which to calculate volatge beamwidth
+    dish_diameter : float
+        Diameter of antenna dish
+    Returns
+    -------
+    expected_width : sequence of 2 floats, or float
+        Initial guess of single beamwidth for both dimensions, or 2-element
+        beamwidth vector, expressed as FWHM in units of target coordinates
+
+    """
+    expected_width = rad2deg(beamwidth_factor * lightspeed
+                             / frequency / dish_diameter)
+    # Convert power beamwidth to gain / voltage beamwidth
+    expected_width = np.sqrt(2.0) * expected_width
+    # XXX This assumes we are still using default ant.beamwidth of 1.22
+    # and also handles larger effective dish diameter in H direction
+    expected_width = (0.8 * expected_width, 0.9 * expected_width)
+    return expected_width
+
+
+def beam_fit(data_points, ants, num_chunks=16, beam_center=(0.5, 0.5)):
     """Fit primary beams to receptor gains obtained at various offset pointings.
 
     Parameters
     ----------
-    session : :class:`katcorelib.observe.CaptureSession` object
-        The active capture session
-    data_points : dict mapping receptor index to (x, y, freq, gain, weight) seq
-        Complex gains per receptor, as multiple records per offset and frequency
 
+    data_points : dict mapping receptor index to (x, y, freq, gain, weight) seq
+        Complex gains per receptor, as multiple records per offset and
+        frequency chunk
+    ants : list of :class:`katpoint.Antenna`
+        A list of antenna objects for fitted beams
+    num_chunks : int, optional
+        Group the frequency channels into this many sections to obtain
+        pointing fits
+   beam_center : sequence of 2 floats
+        Initial guess of 2-element beam center, in target coordinate units
     Returns
     -------
     beams : dict mapping receptor name to list of :class:`BeamPatternFit`
@@ -272,24 +301,18 @@ def fit_primary_beams(session, data_points):
     # Iterate over receptors
     for a in data_points:
         data = np.rec.fromrecords(data_points[a], names='x,y,freq,gain,weight')
-        data = data.reshape(-1, NUM_CHUNKS)
-        ant = session.observers[a]
+        data = data.reshape(-1, num_chunks)
+        ant = ants[a]
         # Iterate over frequency chunks but discard typically dodgy band edges
-        for chunk in range(1, NUM_CHUNKS - 1):
+        for chunk in range(1, num_chunks - 1):
             chunk_data = data[:, chunk]
-            is_valid = np.nonzero(~np.isnan(chunk_data['gain']) &
-                                  (chunk_data['weight'] > 0.))[0]
+            is_valid = np.nonzero(~np.isnan(chunk_data['gain']) & (chunk_data['weight'] > 0.))[0]
             chunk_data = chunk_data[is_valid]
             if len(chunk_data) == 0:
                 continue
-            expected_width = rad2deg(ant.beamwidth * lightspeed /
-                                     chunk_data['freq'][0] / ant.diameter)
-            # Convert power beamwidth to gain / voltage beamwidth
-            expected_width = np.sqrt(2.0) * expected_width
-            # XXX This assumes we are still using default ant.beamwidth of 1.22
-            # and also handles larger effective dish diameter in H direction
-            expected_width = (0.8 * expected_width, 0.9 * expected_width)
-            beam = BeamPatternFit((0., 0.), expected_width, 1.0)
+            # expected widths for each frequency channel
+            expected_width = _voltage_beamwidths(ant.beamwidth, chunk_data['freq'][0], ant.diameter)
+            beam = BeamPatternFit(beam_center, expected_width, 1.0)
             x = np.c_[chunk_data['x'], chunk_data['y']].T
             y = chunk_data['gain']
             std_y = np.sqrt(1. / chunk_data['weight'])
@@ -299,36 +322,39 @@ def fit_primary_beams(session, data_points):
                 continue
             beamwidth_norm = beam.width / np.array(expected_width)
             center_norm = beam.center / beam.std_center
-            user_logger.debug("%s %2d %2d: height=%4.2f width=(%4.2f, %4.2f) "
-                              "center=(%7.2f, %7.2f)%s",
-                              ant.name, chunk, len(y), beam.height,
-                              beamwidth_norm[0], beamwidth_norm[1],
-                              center_norm[0], center_norm[1],
-                              ' X' if not beam.is_valid else '')
+            logger.debug("%s %2d %2d: height=%4.2f width=(%4.2f, %4.2f) "
+                         "center=(%7.2f, %7.2f)%s",
+                         ant.name, chunk, len(y), beam.height,
+                         beamwidth_norm[0], beamwidth_norm[1],
+                         center_norm[0], center_norm[1],
+                         ' X' if not beam.is_valid else '')
             # Store beam per frequency chunk and per receptor
-            beams_freq = beams.get(ant.name, [None] * NUM_CHUNKS)
+            beams_freq = beams.get(ant.name, [None] * num_chunks)
             beams_freq[chunk] = beam
             beams[ant.name] = beams_freq
     return beams
 
 
-def calc_pointing_offsets(session, beams, target, middle_time,
-                          temperature, pressure, humidity):
+def calc_pointing_offsets(ants, middle_time, temperature, humidity, pressure,
+                          beams, target, existing_az_el_adjust=None):
     """Calculate pointing offsets per receptor based on primary beam fits.
 
     Parameters
     ----------
-    session : :class:`katcorelib.observe.CaptureSession` object
-        The active capture session
+    ants: list of :class:`katpoint.Antenna`
+        A list of antenna objects for fitted beams
+    middle_time : float
+        Unix timestamp at the middle of sequence of offset pointings, used to
+        find the mean location of a moving target (and reference for weather)
+    temperature, humidity, pressure : :class: 'float'
+        Atmospheric conditions at middle time, used for refraction correction
     beams : dict mapping receptor name to list of :class:`BeamPatternFit`
         Fitted primary beams, per receptor and per frequency chunk
     target : :class:`katpoint.Target` object
         The target on which offset pointings were done
-    middle_time : float
-        Unix timestamp at the middle of sequence of offset pointings, used to
-        find the mean location of a moving target (and reference for weather)
-    temperature, pressure, humidity : float
-        Atmospheric conditions at middle time, used for refraction correction
+    existing_az_el_adjust : array of float, shape(n_ants, 2)
+        Numpy array of existing (az,el) adjustment of target for
+        each antenna. Defaults to zero
 
     Returns
     -------
@@ -345,13 +371,16 @@ def calc_pointing_offsets(session, beams, target, middle_time,
           - rough uncertainty (standard deviation) of (az, el) adjustment.
 
     """
+
+    if existing_az_el_adjust is None:
+        existing_az_el_adjust = np.zeros((len(ants), 2))
+
     pointing_offsets = {}
     # Iterate over receptors
-    for ant in sorted(session.observers):
+    for ant in sorted(ants):
         beams_freq = beams.get(ant.name, [])
         beams_freq = [b for b in beams_freq if b is not None and b.is_valid]
         if not beams_freq:
-            user_logger.debug("%s had no valid primary beam fitted", ant.name)
             continue
         offsets_freq = np.array([b.center for b in beams_freq])
         offsets_freq_std = np.array([b.std_center for b in beams_freq])
@@ -361,13 +390,12 @@ def calc_pointing_offsets(session, beams, target, middle_time,
                              returned=True)
         pointing_offset = results[0]
         pointing_offset_std = np.sqrt(1. / results[1])
-        user_logger.debug("%s x=%+7.2f'+-%.2f\" y=%+7.2f'+-%.2f\"", ant.name,
-                          pointing_offset[0] * 60, pointing_offset_std[0] * 3600,
-                          pointing_offset[1] * 60, pointing_offset_std[1] * 3600)
+        logger.debug("%s x=%+7.2f'+-%.2f\" y=%+7.2f'+-%.2f\"", ant.name,
+                     pointing_offset[0] * 60, pointing_offset_std[0] * 3600,
+                     pointing_offset[1] * 60, pointing_offset_std[1] * 3600)
         # Get existing pointing adjustment
-        receptor = getattr(session.kat, ant.name)
-        az_adjust = receptor.sensor.pos_adjust_pointm_azim.get_value()
-        el_adjust = receptor.sensor.pos_adjust_pointm_elev.get_value()
+        az_adjust = existing_az_el_adjust[ants.index(ant)][0]
+        el_adjust = existing_az_el_adjust[ants.index(ant)][1]
         existing_adjustment = deg2rad(np.array((az_adjust, el_adjust)))
         # Start with requested (az, el) coordinates, as they apply
         # at the middle time for a moving target
@@ -375,6 +403,7 @@ def calc_pointing_offsets(session, beams, target, middle_time,
         # Correct for refraction, which becomes the requested value
         # at input of pointing model
         rc = RefractionCorrection()
+
         def refract(az, el):  # noqa: E306, E301
             """Apply refraction correction as at the middle of scan."""
             return [az, rc.apply(el, temperature, pressure, humidity)]
@@ -384,9 +413,8 @@ def calc_pointing_offsets(session, beams, target, middle_time,
         adjusted_azel = pointed_azel + existing_adjustment
         # Convert fitted offset back to spherical (az, el) coordinates
         pointing_offset = deg2rad(np.array(pointing_offset))
-        beam_center_azel = target.plane_to_sphere(*pointing_offset,
-                                                  timestamp=middle_time,
-                                                  antenna=ant)
+        beam_center_azel = target.plane_to_sphere(
+            *pointing_offset, timestamp=middle_time, antenna=ant)
         # Now correct the measured (az, el) for refraction and then apply the
         # existing pointing model and adjustment to get a "raw" measured
         # (az, el) at the output of the pointing model stage
@@ -406,129 +434,8 @@ def calc_pointing_offsets(session, beams, target, middle_time,
                            rad2deg(full_adjust_azel),
                            rad2deg(relative_adjust_azel), offset_azel_std]
         pointing_offsets[ant.name] = point_data
+        offsets = point_data.copy()
+        offsets[2:] *= 60.
+        logger.debug("%s (%+6.2f, %5.2f) deg -> (%+7.2f', %+7.2f')",
+                     ant.name, *offsets[[0, 1, 6, 7]])
     return pointing_offsets
-
-
-def save_pointing_offsets(session, pointing_offsets, middle_time):
-    """Save pointing offsets to telstate and display to user.
-
-    Parameters
-    ----------
-    session : :class:`katcorelib.observe.CaptureSession` object
-        The active capture session
-    pointing_offsets : dict mapping receptor name to offset data (10 floats)
-        Pointing offsets per receptor, in degrees
-    middle_time : float
-        Unix timestamp at the middle of sequence of offset pointings
-
-    """
-    # Pointing adjustments go into root view as other capture blocks need it
-    telstate = session.telstate.root()
-    user_logger.info("Ant  refracted (az, el)     relative adjustment")
-    user_logger.info("---- --------------------   --------------------")
-    for ant in sorted(session.observers):
-        try:
-            offsets = pointing_offsets[ant.name].copy()
-        except KeyError:
-            user_logger.warn('%s had no valid primary beam fitted', ant.name)
-        else:
-            sensor_name = '%s_pointing_offsets' % (ant.name,)
-            telstate.add(sensor_name, offsets, middle_time)
-            # Display all offsets in arcminutes
-            offsets[2:] *= 60.
-            user_logger.info("%s (%+6.2f, %5.2f) deg -> (%+7.2f', %+7.2f')",
-                             ant.name, *offsets[[0, 1, 6, 7]])
-
-
-# Set up standard script options
-usage = "%prog [options] <'target/catalogue'> [<'target/catalogue'> ...]"
-description = 'Perform offset pointings on the first source and obtain ' \
-              'pointing offsets based on interferometric gains. At least ' \
-              'one target must be specified.'
-parser = standard_script_options(usage, description)
-# Add experiment-specific options
-parser.add_option('-t', '--track-duration', type='float', default=16.0,
-                  help='Duration of each offset pointing, in seconds (default=%default)')
-parser.add_option('--max-extent', type='float', default=1.0,
-                  help='Maximum distance of offset from target, in degrees')
-parser.add_option('--pointings', type='int', default=10,
-                  help='Number of offset pointings')
-# Set default value for any option (both standard and experiment-specific options)
-parser.set_defaults(description='Reference pointing', nd_params='off')
-# Parse the command line
-opts, args = parser.parse_args()
-
-if len(args) == 0:
-    raise ValueError("Please specify at least one target argument via name "
-                     "('Cygnus A'), description ('azel, 20, 30') or catalogue "
-                     "file name ('sources.csv')")
-
-# Build up sequence of pointing offsets running linearly in x and y directions
-scan = np.linspace(-opts.max_extent, opts.max_extent, opts.pointings // 2)
-offsets_along_x = np.c_[scan, np.zeros_like(scan)]
-offsets_along_y = np.c_[np.zeros_like(scan), scan]
-offsets = np.r_[offsets_along_y, offsets_along_x]
-offset_end_times = np.zeros(len(offsets))
-middle_time = 0.0
-weather = {}
-
-# Check options and build KAT configuration, connecting to proxies and clients
-with verify_and_connect(opts) as kat:
-    observation_sources = collect_targets(kat, args)
-    # Start capture session
-    with start_session(kat, **vars(opts)) as session:
-        # Quit early if there are no sources to observe or not enough antennas
-        if len(session.ants) < 4:
-            raise ValueError('Not enough receptors to do calibration - you '
-                             'need 4 and you have %d' % (len(session.ants),))
-        if len(observation_sources.filter(el_limit_deg=opts.horizon)) == 0:
-            raise NoTargetsUpError("No targets are currently visible - "
-                                   "please re-run the script later")
-        session.standard_setup(**vars(opts))
-        session.capture_start()
-
-        # XXX Eventually pick closest source as our target, now take first one
-        target = observation_sources.targets[0]
-        target.add_tags('bfcal single_accumulation')
-        session.label('interferometric_pointing')
-        user_logger.info("Initiating interferometric pointing scan on target "
-                         "'%s' (%d pointings of %g seconds each)",
-                         target.name, len(offsets), opts.track_duration)
-        session.track(target, duration=0, announce=False)
-        # Point to the requested offsets and collect extra data at middle time
-        for n, offset in enumerate(offsets):
-            user_logger.info("initiating track on offset of (%g, %g) degrees", *offset)
-            session.ants.req.offset_fixed(offset[0], offset[1], opts.projection)
-            session.track(target, duration=opts.track_duration, announce=False)
-            offset_end_times[n] = time.time()
-            if not kat.dry_run and n == len(offsets) // 2 - 1:
-                # Get weather data for refraction correction at middle time
-                temperature = kat.sensor.anc_air_temperature.get_value()
-                pressure = kat.sensor.anc_air_pressure.get_value()
-                humidity = kat.sensor.anc_air_relative_humidity.get_value()
-                weather = {'temperature': temperature, 'pressure': pressure,
-                           'humidity': humidity}
-                middle_time = offset_end_times[n]
-                user_logger.info("reference time = %.1f, weather = "
-                                 "%.1f deg C | %.1f hPa | %.1f %%",
-                                 middle_time, temperature, pressure, humidity)
-        # Clear offsets in order to jiggle cal pipeline to drop its final gains
-        # XXX We assume that the final entry in `offsets` is not the origin
-        user_logger.info("returning to target to complete the scan")
-        session.ants.req.offset_fixed(0., 0., opts.projection)
-        session.track(target, duration=0, announce=False)
-        user_logger.info("Waiting for gains to materialise in cal pipeline")
-
-        # Perform basic interferometric pointing reduction
-        if not kat.dry_run:
-            # Wait for last piece of the cal puzzle (crash if not on time)
-            last_offset_start = offset_end_times[-1] - opts.track_duration
-            session.get_cal_solutions('G', timeout=300.,
-                                      start_time=last_offset_start)
-            user_logger.info('Retrieving gains, fitting beams, storing offsets')
-            data_points = get_offset_gains(session, offsets, offset_end_times,
-                                           opts.track_duration)
-            beams = fit_primary_beams(session, data_points)
-            pointing_offsets = calc_pointing_offsets(session, beams, target,
-                                                     middle_time, **weather)
-            save_pointing_offsets(session, pointing_offsets, middle_time)
