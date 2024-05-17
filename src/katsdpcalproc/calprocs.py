@@ -259,14 +259,14 @@ def stefcal(rawvis, num_ants, corrprod_lookup, weights=None, ref_ant=0,
 
     Parameters
     ----------
-    rawvis : array of complex, shape (M, ..., N)
+    rawvis : array of complex, shape (..., N)
         Complex cross-correlations between antennas A and B, assuming *N*
         baselines or antenna pairs on the last dimension
     num_ants : int
         Number of antennas
     corrprod_lookup : numpy array of int, shape (N, 2)
         First and second antenna indices associated with visibilities
-    weights : float or array of float, shape (M, ..., N), optional
+    weights : float or array of float, shape (..., N), optional
         Visibility weights (positive real numbers)
     ref_ant : int, optional
         Reference antenna for which phase will be forced to 0.0. Alternatively,
@@ -280,7 +280,7 @@ def stefcal(rawvis, num_ants, corrprod_lookup, weights=None, ref_ant=0,
 
     Returns
     -------
-    gains : array of complex, shape (M, ..., num_ants)
+    gains : array of complex, shape (..., num_ants)
         Complex gains per antenna
 
     Notes
