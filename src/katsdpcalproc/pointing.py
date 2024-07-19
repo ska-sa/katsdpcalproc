@@ -18,7 +18,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def get_offset_gains(bp_gains, gains, offsets, ants, track_duration,
+def get_offset_gains(bp_gains, offsets, ants, track_duration,
                      center_freq, bandwidth, n_channels, pols, num_chunks=16):
     """Extract gains per pointing offset, per receptor and per frequency chunk.
 
@@ -27,9 +27,6 @@ def get_offset_gains(bp_gains, gains, offsets, ants, track_duration,
     bp_gains : numpy.array
         Numpy array of shape (n_offsets, n_channels, n_polarizations, n_antennas)
         containing bandpass gains
-    gains : numpy.array
-        Numpy array of shape (n_offsets, n_polarizations, n_antennas)
-        containing gains
     offsets : list of sequences of 2 floats
         list of requested (x, y) pointing offsets co-ordinates relative to target,
         in degrees.
@@ -62,7 +59,7 @@ def get_offset_gains(bp_gains, gains, offsets, ants, track_duration,
                                    * (bandwidth / bp_gains.shape[1]))
     chunk_freqs = channel_freqs.reshape(num_chunks, -1).mean(axis=1)
     data_points = {}
-    for offset, offset_bp_gain, offset_gain in zip(offsets, bp_gains, gains):
+    for offset, offset_bp_gain in zip(offsets,bp_gains):
         for a, ant in enumerate(ants):
             pol_gain = np.zeros(num_chunks)
             pol_weight = np.zeros(num_chunks)
@@ -70,10 +67,9 @@ def get_offset_gains(bp_gains, gains, offsets, ants, track_duration,
             for pol in range(len(pols)):
                 inp = ant.name + pols[pol]
                 bp_gain = offset_bp_gain[:, pol, a]
-                gain = offset_gain[pol, a]
-                if bp_gain is None or gain is None:
+                if bp_gain is None:
                     continue
-                masked_gain = np.ma.masked_invalid(bp_gain * gain)
+                masked_gain = np.ma.masked_invalid(bp_gain)
                 abs_gain_chunked = np.abs(masked_gain).reshape(num_chunks, -1)
                 abs_gain_mean = abs_gain_chunked.mean(axis=1)
                 abs_gain_std = abs_gain_chunked.std(axis=1)
@@ -96,8 +92,6 @@ def get_offset_gains(bp_gains, gains, offsets, ants, track_duration,
                                      abs_gain_std.filled(np.nan))
                 stats_N = ' '.join("%4d" % (n,) for n in abs_gain_N)
                 bp_mean = np.nanmean(np.abs(bp_gain))
-                logger.debug("%s %s %4.2f mean | %s",
-                             tuple(offset), inp, np.abs(gain), stats_mean)
                 logger.debug("%s %s %4.2f std  | %s",
                              tuple(offset), inp, bp_mean, stats_std)
                 logger.debug("%s %s      N    | %s",
