@@ -59,7 +59,7 @@ def get_offset_gains(bp_gains, offsets, ants, track_duration,
                                    * (bandwidth / bp_gains.shape[1]))
     chunk_freqs = channel_freqs.reshape(num_chunks, -1).mean(axis=1)
     data_points = {}
-    for offset, offset_bp_gain in zip(offsets,bp_gains):
+    for offset, offset_bp_gain in zip(offsets, bp_gains):
         for a, ant in enumerate(ants):
             pol_gain = np.zeros(num_chunks)
             pol_weight = np.zeros(num_chunks)
@@ -86,8 +86,6 @@ def get_offset_gains(bp_gains, offsets, ants, track_duration,
                 # Generate standard precision weights based on empirical stdev
                 abs_gain_weight = abs_gain_N / abs_gain_var
                 # Prepare some debugging output
-                stats_mean = ' '.join("%4.2f" % (m,) for m in
-                                      abs_gain_mean.filled(np.nan))
                 stats_std = ' '.join("%4.2f" % (s,) for s in
                                      abs_gain_std.filled(np.nan))
                 stats_N = ' '.join("%4d" % (n,) for n in abs_gain_N)
