@@ -86,10 +86,14 @@ def get_offset_gains(bp_gains, offsets, ants, track_duration,
                 # Generate standard precision weights based on empirical stdev
                 abs_gain_weight = abs_gain_N / abs_gain_var
                 # Prepare some debugging output
+                stats_mean = ' '.join("%4.2f" % (m,) for m in
+                                      abs_gain_mean.filled(np.nan))
                 stats_std = ' '.join("%4.2f" % (s,) for s in
                                      abs_gain_std.filled(np.nan))
                 stats_N = ' '.join("%4d" % (n,) for n in abs_gain_N)
                 bp_mean = np.nanmean(np.abs(bp_gain))
+                logger.debug("%s %s %4.2f mean | %s",
+                             tuple(offset), inp, np.abs(bp_gain), stats_mean)
                 logger.debug("%s %s %4.2f std  | %s",
                              tuple(offset), inp, bp_mean, stats_std)
                 logger.debug("%s %s      N    | %s",
