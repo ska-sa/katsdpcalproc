@@ -58,9 +58,6 @@ ANT_DESCRIPTIONS = ["""m000,
 ants = [katpoint.Antenna(ant) for ant in ANT_DESCRIPTIONS]
 az_el_adjust = np.zeros((len(ants), 2))
 
-# Creating gains, numpy array shape (no.offsets, no.polarisations, no.antennas)
-just_gains = np.ones((len(offsets), len(POLS), len(ants)), dtype=np.complex64)
-
 
 def generate_bp_gains(offsets, ants, channel_freqs, pols, beam_center=(0.5, 0.5)):
     """ Creating bp_gains, numpy array of shape:
@@ -97,7 +94,6 @@ def generate_bp_gains(offsets, ants, channel_freqs, pols, beam_center=(0.5, 0.5)
 bp_gains = generate_bp_gains(offsets, ants, channel_freqs, POLS)
 data_points = pointing.get_offset_gains(
     bp_gains,
-    just_gains,
     offsets,
     ants,
     TRACK_DURATION,
@@ -128,7 +124,6 @@ def test_get_offset_gains_shape():
     with pytest.raises(ValueError):
         pointing.get_offset_gains(
             bp_gains[0],
-            just_gains[0],
             offsets,
             ants,
             TRACK_DURATION,
