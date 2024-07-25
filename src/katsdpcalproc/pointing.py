@@ -93,7 +93,7 @@ def get_offset_gains(bp_gains, offsets, ants, track_duration,
                 stats_N = ' '.join("%4d" % (n,) for n in abs_gain_N)
                 bp_mean = np.nanmean(np.abs(bp_gain))
                 logger.debug("%s %s %4.2f mean | %s",
-                             tuple(offset), inp, np.abs(bp_gain), stats_mean)
+                             tuple(offset), inp, bp_mean, stats_mean)
                 logger.debug("%s %s %4.2f std  | %s",
                              tuple(offset), inp, bp_mean, stats_std)
                 logger.debug("%s %s      N    | %s",
