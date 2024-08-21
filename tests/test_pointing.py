@@ -96,10 +96,7 @@ data_points = pointing.get_offset_gains(
     bp_gains,
     offsets,
     ants,
-    TRACK_DURATION,
-    CENTER_FREQ,
-    BANDWIDTH,
-    N_CHANNELS,
+    channel_freqs,
     POLS,
     NUM_CHUNKS)
 beams = pointing.beam_fit(data_points, ants, NUM_CHUNKS)
@@ -127,9 +124,7 @@ def test_get_offset_gains_shape():
             offsets,
             ants,
             TRACK_DURATION,
-            CENTER_FREQ,
-            BANDWIDTH,
-            N_CHANNELS,
+            channel_freqs,
             POLS,
             NUM_CHUNKS)
 

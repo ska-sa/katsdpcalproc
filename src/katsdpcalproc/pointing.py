@@ -18,8 +18,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def get_offset_gains(bp_gains, offsets, ants, track_duration,
-                     center_freq, bandwidth, n_channels, pols, num_chunks=16):
+def get_offset_gains(bp_gains, offsets, ants, channel_freqs, pols, num_chunks=16):
     """Extract gains per pointing offset, per receptor and per frequency chunk.
 
     Parameters
@@ -32,12 +31,8 @@ def get_offset_gains(bp_gains, offsets, ants, track_duration,
         in degrees.
     ants : list of :class:`katpoint.Antenna`
         A list of antenna objects for fitted beams
-    track_duration : float,
-        Duration of each pointing track, in seconds
-    center_freq, bandwidth : float
-        center frequency, bandwidth and number of channels
-    n_channels : int
-        Number of channels
+    channel_freqs : list of floats
+        A list of channel frequencies
     pols : list of strings
         A list containing polarisations, eg, ["h","v"]
     num_chunks : int, optional
@@ -51,12 +46,10 @@ def get_offset_gains(bp_gains, offsets, ants, track_duration,
         frequency chunk ie. len(data_points)=63, len(data_points[i])=
         num_chunks*n_offsets, len(data_points[i][j]=5)
     """
-    if bp_gains.shape != (len(offsets), n_channels, len(pols), len(ants)):
+    if bp_gains.shape != (len(offsets), channel_freqs, len(pols), len(ants)):
         raise ValueError(
             "bp_gains must have shape (n_offsets, n_channels, n_polarizations, n_antennas)")
     # Calculating chunk frequencies
-    channel_freqs = center_freq + ((np.arange(bp_gains.shape[1]) - bp_gains.shape[1] / 2)
-                                   * (bandwidth / bp_gains.shape[1]))
     chunk_freqs = channel_freqs.reshape(num_chunks, -1).mean(axis=1)
     data_points = {}
     for offset, offset_bp_gain in zip(offsets, bp_gains):
