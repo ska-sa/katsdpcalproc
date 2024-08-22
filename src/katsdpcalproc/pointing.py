@@ -46,7 +46,7 @@ def get_offset_gains(bp_gains, offsets, ants, channel_freqs, pols, num_chunks=16
         frequency chunk ie. len(data_points)=63, len(data_points[i])=
         num_chunks*n_offsets, len(data_points[i][j]=5)
     """
-    if bp_gains.shape != (len(offsets), channel_freqs, len(pols), len(ants)):
+    if bp_gains.shape != (len(offsets), len(channel_freqs), len(pols), len(ants)):
         raise ValueError(
             "bp_gains must have shape (n_offsets, n_channels, n_polarizations, n_antennas)")
     # Calculating chunk frequencies
