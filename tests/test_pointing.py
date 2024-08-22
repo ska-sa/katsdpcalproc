@@ -12,7 +12,6 @@ MIDDLE_TIME = 1691795333.43713
 TEMPERATURE = 14.7
 HUMIDITY = 29.1
 PRESSURE = 897
-TRACK_DURATION = 24
 NUM_CHUNKS = 5
 # TODO These tests only use 1 polarization axis
 POLS = ["h"]
@@ -123,7 +122,6 @@ def test_get_offset_gains_shape():
             bp_gains[0],
             offsets,
             ants,
-            TRACK_DURATION,
             channel_freqs,
             POLS,
             NUM_CHUNKS)
