@@ -23,7 +23,7 @@ dependencies = [
     "numba>=0.49.0",
     "numpy>=1.15",
     "scikits.fitting",
-    "scipy>=0.17",
+    "scipy>=1.5.0",
     "sortedcontainers",
 ]
 dynamic = ["version"]
