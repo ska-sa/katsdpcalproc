@@ -357,25 +357,29 @@ def select_med_deviation_pnr_ants(med_pnr_ants):
 def best_refant(data, corrprod_lookup, chans):
     """Identify antenna that is most suited to be the reference antenna.
 
-    This function determines the best reference antenna through the following process:
+    This function determines the best reference antenna through the following
+    process:
 
-    - Perform a Fourier Transform on the visibilities along the frequency axis. Since the
-      visibilities from the correlator have roughly linear phase slopes, the resultant
-      FFT of the visibilities are expected to be highly peaked.
+    - Perform a Fourier Transform on the visibilities along the frequency
+      axis. Since the visibilities obtained from a calibrator have roughly
+      linear phase slopes across the band, the resultant FFT of the
+      visibilities are expected to be highly peaked.
 
-    - Calculate the peak-to-noise ratio (PNR) for all baselines per antenna to measure the
-      strength of the peaked visibilities. Highly peaked visibilities indicates good signal
-      coherence and quality for phase calibration.
+    - Calculate the peak-to-noise ratio (PNR) per baseline and per dump to
+      measure the strength of the peaked visibilities. Highly peaked
+      visibilities indicates good signal coherence and quality for phase
+      calibration.
 
-    - Calculate the median PNR, this serves as a robust figure of merit for identifying antenna
-      that have good signal coherence.
+    - Calculate the median PNR per antenna. This serves as a robust figure of
+      merit for identifying antennas that have good signal coherence.
 
-    - Select antennas with high median PNR values by applying the select_med_deviation_pnr_ants()
-      function, i.e. removes roughly the bottom 20% of antenna from being selected as a candidate
-      reference antenna for calibration.
+    - Select antennas with high median PNR values by applying the
+      :func:`select_med_deviation_pnr_ants` function. This removes roughly the
+      bottom 20% of antennas from being selected as a candidate reference
+      antenna for calibration.
 
-    - Sort the remaining antenna indices in descending order to promote the outer antennas
-      above the core antennas.
+    - Sort the remaining antenna indices in descending order to promote the
+      outer antennas (large indices) above the core antennas (small indices).
 
     Parameters
     ----------
@@ -389,9 +393,10 @@ def best_refant(data, corrprod_lookup, chans):
     Returns
     -------
     refant_best_to_worse : :class:`np.ndarray`
-       Array of antenna indices sorted according to the suitability of the corresponding antenna
-       to be the reference antenna. The first antenna index in the list is considered to be the
-       best candidate reference antenna.
+       Array of antenna indices sorted according to the suitability of the
+       corresponding antenna to be the reference antenna. The first antenna
+       index in the list is considered to be the best candidate reference
+       antenna.
     """
     # Detect position of fft peak
     ft_vis = scipy.fftpack.fft(data, axis=0)
