@@ -20,20 +20,22 @@ CENTER_FREQ = 1284000000.0
 BANDWIDTH = 856000000.0
 N_CHANNELS = 1000
 
+
+def _pointing_offsets(max_extent, num_pointings):
+    """Build up sequence of pointing offsets running linearly in x and y directions."""
+    scan = np.linspace(-max_extent, max_extent, num_pointings // 2)
+    offsets_along_x = np.c_[scan, np.zeros_like(scan)]
+    offsets_along_y = np.c_[np.zeros_like(scan), scan]
+    return np.r_[offsets_along_y, offsets_along_x]
+
+
 # Calculating channel and chunk freqencies
 channel_freqs = CENTER_FREQ + (np.arange(N_CHANNELS) - N_CHANNELS / 2) * (BANDWIDTH / N_CHANNELS)
 chunk_freqs = channel_freqs.reshape(NUM_CHUNKS, -1).mean(axis=1)
 target = katpoint.Target(
     body="J1939-6342, radec bfcal single_accumulation, 19:39:25.03, -63:42:45.6")
-
 # Maximum distance of offset from target, in degrees
-max_extent = 1.0
-num_pointings = 8
-# Build up sequence of pointing offsets running linearly in x and y directions
-scan = np.linspace(-max_extent, max_extent, num_pointings // 2)
-offsets_along_x = np.c_[scan, np.zeros_like(scan)]
-offsets_along_y = np.c_[np.zeros_like(scan), scan]
-offsets = np.r_[offsets_along_y, offsets_along_x]
+offsets = _pointing_offsets(max_extent=1.0, num_pointings=8)
 
 # Creating list of antenna objects
 ANT_DESCRIPTIONS = ["""m000,
