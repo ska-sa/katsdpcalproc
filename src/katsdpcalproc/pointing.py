@@ -152,7 +152,7 @@ class BeamPatternFit:
         # Fix theta = 0 to ensure that elliptical beam contours line up with axes
         model.theta.fixed = True
         self._set_model(model)
-        self._fit = fitting.LMLSQFitter(calc_uncertainties=True)
+        self._fit = fitting.LevMarLSQFitter(calc_uncertainties=True)
         self.expected_width = width
         self.is_valid = False
         self.std_center = self.std_width = self.std_height = None
@@ -183,11 +183,19 @@ class BeamPatternFit:
         """
         new_model = self._fit(self._model, x=x[0], y=x[1], z=y, weights=1.0 / std_y)
         self._set_model(new_model)
-        param_std = np.sqrt(np.diag(self._fit.fit_info['param_cov']))
+        param_cov = self._fit.fit_info['param_cov']
+        # The parameter cov matrix is absent if singular: be very uncertain then
+        # XXX Only an issue with LevMarLSQFitter - remove check for LMLSQFitter
+        if param_cov is None:
+            param_std = np.full(5, np.inf)
+        else:
+            param_std = np.sqrt(np.diag(param_cov))
         self.std_center = param_std[1:3]
         self.std_width = GAUSSIAN_SIGMA_TO_FWHM * param_std[3:5]
         self.std_height = param_std[0]
-        self.is_valid = not any(np.isnan(self.center)) and self.height > 0.
+        self.is_valid = all(np.isfinite(self.center)) and self.height > 0.0
+        # Also invalidate beam if fit succeeds but there are no uncertainties
+        self.is_valid &= all(np.isfinite(self.std_center))
         # XXX: POTENTIAL TWEAK
         norm_width = self.width / self.expected_width
         self.is_valid &= all(norm_width > 0.9) and all(norm_width < 1.25)
