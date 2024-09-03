@@ -5,7 +5,6 @@ import katpoint
 import pytest
 from katsdpcalproc import pointing
 import cmath
-import random
 import scipy.stats
 
 # Creating metadata fpr tests
@@ -88,7 +87,7 @@ def generate_bp_gains(offsets, ants, channel_freqs, pols, beam_center=(0.5, 0.5)
                 for k in ex_width:
                     new_beam = pointing.BeamPatternFit(beam_center, k, 1.0)
                     g = new_beam(x=offsets[i].T)
-                    cmplx = random.uniform(-1.5, 1.5)
+                    cmplx = np.random.uniform(-1.5, 1.5)
                     g = cmath.rect(g, cmplx)
                     gains.append(np.array(g))
                 gains = np.array(gains).T
@@ -199,7 +198,7 @@ def _beam_params_std(beam, error_scale):
     return np.r_[beam.height, beam.width / FWHM_SCALE, beam.width] * error_scale
 
 
-def test_gaussian_beam_fit_accuracy():
+def test_gaussian_beam_fit_accuracy(random):
     r"""Reproduce Jim Condon's 2-D Gaussian fitting simulation.
 
     This repeats a computer simulation described in [Condon1997]_, which
@@ -244,7 +243,7 @@ def test_gaussian_beam_fit_accuracy():
     # Generate square "image" on which Gaussians will be sampled
     xy_k = np.reshape(np.meshgrid(samples_1d, samples_1d), (2, -1))
     # Generate beam centers within a few pixels of origin
-    x0, y0 = 10 * h * (np.random.rand(2, T) - 0.5)
+    x0, y0 = 10 * h * (random.rand(2, T) - 0.5)
     # Beam amplitude
     A = 20 * mu
     # Beam diameters along x and y
@@ -252,8 +251,8 @@ def test_gaussian_beam_fit_accuracy():
     theta_M = 8 * h
     theta_m = 20 * h / 3
     # Vary the beam diameter by a few percent to make it more realistic
-    fwhm_x = theta_M * (1 + 0.04 * (np.random.rand(T) - 0.5))
-    fwhm_y = theta_m * (1 + 0.04 * (np.random.rand(T) - 0.5))
+    fwhm_x = theta_M * (1 + 0.04 * (random.rand(T) - 0.5))
+    fwhm_y = theta_m * (1 + 0.04 * (random.rand(T) - 0.5))
     # Beam position angle is set to phi = 0 instead due to fitter limitation
     # Effective number of independent samples in fitted Gaussian
     N = (np.pi / FWHM_SCALE ** 2) * fwhm_x * fwhm_y / h ** 2
@@ -268,7 +267,7 @@ def test_gaussian_beam_fit_accuracy():
         # XXX This assumes that BeamPatternFit fits a Gaussian beam
         true_beam = pointing.BeamPatternFit((x0[t], y0[t]), (fwhm_x[t], fwhm_y[t]), A)
         # Generate noisy beam amplitude samples on pixel grid
-        a_k = true_beam(xy_k) + mu * np.random.randn(xy_k.shape[1])
+        a_k = true_beam(xy_k) + mu * random.randn(xy_k.shape[1])
         # Assume we have a good idea of beamwidth (needed to check beam validity)
         beam = pointing.BeamPatternFit((0.0, 0.0), (theta_M, theta_m), max(a_k))
         beam.fit(xy_k, a_k, mu)
