@@ -113,45 +113,40 @@ def get_offset_gains(bp_gains, offsets, ants, channel_freqs, pols, num_chunks=16
 
 
 class BeamPatternFit:
-    """Fit analytic beam pattern to total power data defined on 2-D plane.
+    """Fit analytic beam pattern to power or gain data defined on 2-D plane.
 
-    This fits a two-dimensional Gaussian curve (with diagonal covariance matrix)
-    to total power data as a function of 2-D coordinates. The Gaussian bump
-    represents an antenna beam pattern convolved with a point source.
+    This fits a two-dimensional Gaussian curve to power or voltage gain data
+    as a function of 2-D coordinates. The Gaussian function is restricted to
+    have a diagonal covariance matrix; in other words, its elliptical contours
+    are aligned with the axes. The Gaussian bump represents an antenna beam
+    pattern convolved with a point source.
 
     Parameters
     ----------
     center : sequence of 2 floats
         Initial guess of 2-element beam center, in target coordinate units
-    width : sequence of 2 floats, or float
-        Initial guess of single beamwidth for both dimensions, or 2-element
-        beamwidth vector, expressed as FWHM in units of target coordinates
+    width : sequence of 2 floats
+        Initial guess of 2-element beamwidth vector, expressed as FWHM in
+        units of target coordinates
     height : float
         Initial guess of beam pattern amplitude or height
 
     Attributes
     ----------
-    expected_width : real array, shape (2,), or float
+    expected_width : array of float, shape (2,)
         Initial guess of beamwidth, saved as expected width for checks
-    radius_first_null : float
-        Radius of first null in beam in target coordinate units (stored here for
-        convenience, but not calculated internally)
-    refined : int
-        Number of scan-based baselines used to refine beam (0 means unrefined)
     is_valid : bool
         True if beam parameters are within reasonable ranges after fit
-    std_center : array of float, shape (2,)
+    std_center : array of float, shape (2,) or None
         Standard error of beam center, only set after :func:`fit`
-    std_width : array of float, shape (2,), or float
+    std_width : array of float, shape (2,) or None
         Standard error of beamwidth(s), only set after :func:`fit`
-    std_height : float
+    std_height : float or None
         Standard error of beam height, only set after :func:`fit`
-
     """
 
     def __init__(self, center, width, height):
-        if not np.isscalar(width):
-            width = np.atleast_1d(width)
+        width = np.asarray(width)
         std = width / GAUSSIAN_SIGMA_TO_FWHM
         model = models.Gaussian2D(height, center[0], center[1], std[0], std[1])
         # Fix theta = 0 to ensure that elliptical beam contours line up with axes
@@ -159,11 +154,6 @@ class BeamPatternFit:
         self._set_model(model)
         self._fit = fitting.LMLSQFitter(calc_uncertainties=True)
         self.expected_width = width
-        # Initial guess for radius of first null
-        # XXX: POTENTIAL TWEAK
-        self.radius_first_null = 1.3 * np.mean(self.expected_width)
-        # Beam initially unrefined and invalid
-        self.refined = 0
         self.is_valid = False
         self.std_center = self.std_width = self.std_height = None
 
@@ -175,22 +165,21 @@ class BeamPatternFit:
         self.height = model.amplitude.value
 
     def fit(self, x, y, std_y=1.0):
-        """Fit a beam pattern to data.
+        """Fit a beam pattern to power or voltage gain data.
 
         The center, width and height of the fitted beam pattern (and their
-        standard errors) can be obtained from the corresponding member variables
-        after this is run.
+        standard errors) can be obtained from the corresponding member
+        variables after this is run.
 
         Parameters
         ----------
         x : array-like, shape (2, N)
             Sequence of 2-dimensional target coordinates (as column vectors)
         y : array-like, shape (N,)
-            Sequence of corresponding total power values to fit
+            Sequence of corresponding power or voltage gain values to fit
         std_y : float or array-like, shape (N,), optional
-            Measurement error or uncertainty of `y` values, expressed as standard
-            deviation in units of `y`
-
+            Measurement error or uncertainty of `y` values, expressed as
+            standard deviation in units of `y`
         """
         new_model = self._fit(self._model, x=x[0], y=x[1], z=y, weights=1.0 / std_y)
         self._set_model(new_model)
@@ -215,7 +204,6 @@ class BeamPatternFit:
         -------
         y : array, shape (M,)
             Sequence of total power values representing fitted beam
-
         """
         return self._model(x[0], x[1])
 
