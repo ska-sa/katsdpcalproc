@@ -17,12 +17,12 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Astronomy",
 ]
 dependencies = [
+    "astropy",
     "dask[array]>=1.1.0",
     "katdal<1",
     "katpoint<1",
     "numba>=0.49.0",
     "numpy>=1.15",
-    "scikits.fitting",
     "scipy>=1.5.0",
     "sortedcontainers",
 ]

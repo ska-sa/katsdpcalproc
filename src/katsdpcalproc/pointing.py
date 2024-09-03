@@ -9,10 +9,13 @@
 # Ludwig Schwardt & Tasmiyah Rawoot
 #
 
-import numpy as np
-from katpoint import (rad2deg, deg2rad, lightspeed, wrap_angle, RefractionCorrection)
-from scikits.fitting import ScatterFit, GaussianFit
 import logging
+
+import numpy as np
+
+from astropy.modeling import models, fitting
+from astropy.modeling.functional_models import GAUSSIAN_SIGMA_TO_FWHM
+from katpoint import rad2deg, deg2rad, lightspeed, wrap_angle, RefractionCorrection
 
 
 logger = logging.getLogger(__name__)
@@ -109,33 +112,7 @@ def get_offset_gains(bp_gains, offsets, ants, channel_freqs, pols, num_chunks=16
     return data_points
 
 
-def fwhm_to_sigma(fwhm):
-    """Standard deviation of Gaussian function with specified FWHM beamwidth.
-
-    This returns the standard deviation of a Gaussian beam pattern with a
-    specified full-width half-maximum (FWHM) beamwidth. This beamwidth is the
-    width between the two points left and right of the peak where the Gaussian
-    function attains half its maximum value.
-
-    """
-    # Gaussian function reaches half its peak value at sqrt(2 log 2)*sigma
-    return fwhm / 2.0 / np.sqrt(2.0 * np.log(2.0))
-
-
-def sigma_to_fwhm(sigma):
-    """FWHM beamwidth of Gaussian function with specified standard deviation.
-
-    This returns the full-width half-maximum (FWHM) beamwidth of a Gaussian beam
-    pattern with a specified standard deviation. This beamwidth is the width
-    between the two points left and right of the peak where the Gaussian
-    function attains half its maximum value.
-
-    """
-    # Gaussian function reaches half its peak value at sqrt(2 log 2)*sigma
-    return 2.0 * np.sqrt(2.0 * np.log(2.0)) * sigma
-
-
-class BeamPatternFit(ScatterFit):
+class BeamPatternFit:
     """Fit analytic beam pattern to total power data defined on 2-D plane.
 
     This fits a two-dimensional Gaussian curve (with diagonal covariance matrix)
@@ -173,13 +150,14 @@ class BeamPatternFit(ScatterFit):
     """
 
     def __init__(self, center, width, height):
-        ScatterFit.__init__(self)
         if not np.isscalar(width):
             width = np.atleast_1d(width)
-        self._interp = GaussianFit(center, fwhm_to_sigma(width), height)
-        self.center = self._interp.mean
-        self.width = sigma_to_fwhm(self._interp.std)
-        self.height = self._interp.height
+        std = width / GAUSSIAN_SIGMA_TO_FWHM
+        model = models.Gaussian2D(height, center[0], center[1], std[0], std[1])
+        # Fix theta = 0 to ensure that elliptical beam contours line up with axes
+        model.theta.fixed = True
+        self._set_model(model)
+        self._fit = fitting.LMLSQFitter(calc_uncertainties=True)
         self.expected_width = width
         # Initial guess for radius of first null
         # XXX: POTENTIAL TWEAK
@@ -188,6 +166,13 @@ class BeamPatternFit(ScatterFit):
         self.refined = 0
         self.is_valid = False
         self.std_center = self.std_width = self.std_height = None
+
+    def _set_model(self, model):
+        """Set underlying model and unpack center, width and height."""
+        self._model = model
+        self.center = np.array([model.x_mean.value, model.y_mean.value])
+        self.width = np.array([model.x_fwhm, model.y_fwhm])
+        self.height = model.amplitude.value
 
     def fit(self, x, y, std_y=1.0):
         """Fit a beam pattern to data.
@@ -207,13 +192,12 @@ class BeamPatternFit(ScatterFit):
             deviation in units of `y`
 
         """
-        self._interp.fit(x, y, std_y)
-        self.center = self._interp.mean
-        self.width = sigma_to_fwhm(self._interp.std)
-        self.height = self._interp.height
-        self.std_center = self._interp.std_mean
-        self.std_width = sigma_to_fwhm(self._interp.std_std)
-        self.std_height = self._interp.std_height
+        new_model = self._fit(self._model, x=x[0], y=x[1], z=y, weights=1.0 / std_y)
+        self._set_model(new_model)
+        param_std = np.sqrt(np.diag(self._fit.fit_info['param_cov']))
+        self.std_center = param_std[1:3]
+        self.std_width = GAUSSIAN_SIGMA_TO_FWHM * param_std[3:5]
+        self.std_height = param_std[0]
         self.is_valid = not any(np.isnan(self.center)) and self.height > 0.
         # XXX: POTENTIAL TWEAK
         norm_width = self.width / self.expected_width
@@ -233,7 +217,7 @@ class BeamPatternFit(ScatterFit):
             Sequence of total power values representing fitted beam
 
         """
-        return self._interp(x)
+        return self._model(x[0], x[1])
 
 
 def _voltage_beamwidths(beamwidth_factor, frequency, dish_diameter):

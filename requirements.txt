@@ -1,11 +1,10 @@
 -c https://raw.githubusercontent.com/ska-sa/katsdpdockerbase/master/docker-base-build/base-requirements.txt
 
+astropy
 dask[array]
-future                   # for scikits.fitting
 numba
 numpy
 scipy
-scikits.fitting==0.7.2
 sortedcontainers
 
 katdal @ git+https://github.com/ska-sa/katdal
