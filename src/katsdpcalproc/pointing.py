@@ -9,10 +9,13 @@
 # Ludwig Schwardt & Tasmiyah Rawoot
 #
 
-import numpy as np
-from katpoint import (rad2deg, deg2rad, lightspeed, wrap_angle, RefractionCorrection)
-from scikits.fitting import ScatterFit, GaussianFit
 import logging
+
+import numpy as np
+
+from astropy.modeling import models, fitting
+from astropy.modeling.functional_models import GAUSSIAN_SIGMA_TO_FWHM
+from katpoint import rad2deg, deg2rad, lightspeed, wrap_angle, RefractionCorrection
 
 
 logger = logging.getLogger(__name__)
@@ -109,112 +112,91 @@ def get_offset_gains(bp_gains, offsets, ants, channel_freqs, pols, num_chunks=16
     return data_points
 
 
-def fwhm_to_sigma(fwhm):
-    """Standard deviation of Gaussian function with specified FWHM beamwidth.
+class BeamPatternFit:
+    """Fit analytic beam pattern to power or gain data defined on 2-D plane.
 
-    This returns the standard deviation of a Gaussian beam pattern with a
-    specified full-width half-maximum (FWHM) beamwidth. This beamwidth is the
-    width between the two points left and right of the peak where the Gaussian
-    function attains half its maximum value.
-
-    """
-    # Gaussian function reaches half its peak value at sqrt(2 log 2)*sigma
-    return fwhm / 2.0 / np.sqrt(2.0 * np.log(2.0))
-
-
-def sigma_to_fwhm(sigma):
-    """FWHM beamwidth of Gaussian function with specified standard deviation.
-
-    This returns the full-width half-maximum (FWHM) beamwidth of a Gaussian beam
-    pattern with a specified standard deviation. This beamwidth is the width
-    between the two points left and right of the peak where the Gaussian
-    function attains half its maximum value.
-
-    """
-    # Gaussian function reaches half its peak value at sqrt(2 log 2)*sigma
-    return 2.0 * np.sqrt(2.0 * np.log(2.0)) * sigma
-
-
-class BeamPatternFit(ScatterFit):
-    """Fit analytic beam pattern to total power data defined on 2-D plane.
-
-    This fits a two-dimensional Gaussian curve (with diagonal covariance matrix)
-    to total power data as a function of 2-D coordinates. The Gaussian bump
-    represents an antenna beam pattern convolved with a point source.
+    This fits a two-dimensional Gaussian curve to power or voltage gain data
+    as a function of 2-D coordinates. The Gaussian function is restricted to
+    have a diagonal covariance matrix; in other words, its elliptical contours
+    are aligned with the axes. The Gaussian bump represents an antenna beam
+    pattern convolved with a point source.
 
     Parameters
     ----------
     center : sequence of 2 floats
         Initial guess of 2-element beam center, in target coordinate units
-    width : sequence of 2 floats, or float
-        Initial guess of single beamwidth for both dimensions, or 2-element
-        beamwidth vector, expressed as FWHM in units of target coordinates
+    width : sequence of 2 floats
+        Initial guess of 2-element beamwidth vector, expressed as FWHM in
+        units of target coordinates
     height : float
         Initial guess of beam pattern amplitude or height
 
     Attributes
     ----------
-    expected_width : real array, shape (2,), or float
+    expected_width : array of float, shape (2,)
         Initial guess of beamwidth, saved as expected width for checks
-    radius_first_null : float
-        Radius of first null in beam in target coordinate units (stored here for
-        convenience, but not calculated internally)
-    refined : int
-        Number of scan-based baselines used to refine beam (0 means unrefined)
     is_valid : bool
         True if beam parameters are within reasonable ranges after fit
-    std_center : array of float, shape (2,)
+    std_center : array of float, shape (2,) or None
         Standard error of beam center, only set after :func:`fit`
-    std_width : array of float, shape (2,), or float
+    std_width : array of float, shape (2,) or None
         Standard error of beamwidth(s), only set after :func:`fit`
-    std_height : float
+    std_height : float or None
         Standard error of beam height, only set after :func:`fit`
-
     """
 
     def __init__(self, center, width, height):
-        ScatterFit.__init__(self)
-        if not np.isscalar(width):
-            width = np.atleast_1d(width)
-        self._interp = GaussianFit(center, fwhm_to_sigma(width), height)
-        self.center = self._interp.mean
-        self.width = sigma_to_fwhm(self._interp.std)
-        self.height = self._interp.height
+        width = np.asarray(width)
+        std = width / GAUSSIAN_SIGMA_TO_FWHM
+        model = models.Gaussian2D(height, center[0], center[1], std[0], std[1])
+        # Fix theta = 0 to ensure that elliptical beam contours line up with axes
+        model.theta.fixed = True
+        self._set_model(model)
+        # TODO Replace with fitting.LMLSQFitter once we depend on Astropy >= 5.1
+        self._fit = fitting.LevMarLSQFitter(calc_uncertainties=True)
         self.expected_width = width
-        # Initial guess for radius of first null
-        # XXX: POTENTIAL TWEAK
-        self.radius_first_null = 1.3 * np.mean(self.expected_width)
-        # Beam initially unrefined and invalid
-        self.refined = 0
         self.is_valid = False
         self.std_center = self.std_width = self.std_height = None
 
+    def _set_model(self, model):
+        """Set underlying model and unpack center, width and height."""
+        self._model = model
+        self.center = np.array([model.x_mean.value, model.y_mean.value])
+        self.width = np.array([model.x_fwhm, model.y_fwhm])
+        self.height = model.amplitude.value
+
     def fit(self, x, y, std_y=1.0):
-        """Fit a beam pattern to data.
+        """Fit a beam pattern to power or voltage gain data.
 
         The center, width and height of the fitted beam pattern (and their
-        standard errors) can be obtained from the corresponding member variables
-        after this is run.
+        standard errors) can be obtained from the corresponding member
+        variables after this is run.
 
         Parameters
         ----------
         x : array-like, shape (2, N)
             Sequence of 2-dimensional target coordinates (as column vectors)
         y : array-like, shape (N,)
-            Sequence of corresponding total power values to fit
+            Sequence of corresponding power or voltage gain values to fit
         std_y : float or array-like, shape (N,), optional
-            Measurement error or uncertainty of `y` values, expressed as standard
-            deviation in units of `y`
-
+            Measurement error or uncertainty of `y` values, expressed as
+            standard deviation in units of `y`
         """
-        self._interp.fit(x, y, std_y)
-        self.center = self._interp.mean
-        self.width = sigma_to_fwhm(self._interp.std)
-        self.height = self._interp.height
-        self.std_center = self._interp.std_mean
-        self.std_width = sigma_to_fwhm(self._interp.std_std)
-        self.std_height = self._interp.std_height
-        self.is_valid = not any(np.isnan(self.center)) and self.height > 0.
+        new_model = self._fit(self._model, x=x[0], y=x[1], z=y, weights=1.0 / std_y)
+        self._set_model(new_model)
+        param_cov = self._fit.fit_info['param_cov']
+        # The parameter cov matrix is absent if singular: be very uncertain then
+        # TODO Only an issue with LevMarLSQFitter - remove check for LMLSQFitter
+        if param_cov is None:
+            param_std = np.full(5, np.inf)
+        else:
+            param_std = np.sqrt(np.diag(param_cov))
+        self.std_center = param_std[1:3]
+        self.std_width = GAUSSIAN_SIGMA_TO_FWHM * param_std[3:5]
+        self.std_height = param_std[0]
+        self.is_valid = all(np.isfinite(self.center)) and self.height > 0.0
+        # Also invalidate beam if fit succeeds but there are no uncertainties
+        self.is_valid &= all(np.isfinite(self.std_center))
         # XXX: POTENTIAL TWEAK
         norm_width = self.width / self.expected_width
         self.is_valid &= all(norm_width > 0.9) and all(norm_width < 1.25)
@@ -231,9 +213,8 @@ class BeamPatternFit(ScatterFit):
         -------
         y : array, shape (M,)
             Sequence of total power values representing fitted beam
-
         """
-        return self._interp(x)
+        return self._model(x[0], x[1])
 
 
 def _voltage_beamwidths(beamwidth_factor, frequency, dish_diameter):
