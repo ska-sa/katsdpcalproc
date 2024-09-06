@@ -152,6 +152,7 @@ class BeamPatternFit:
         # Fix theta = 0 to ensure that elliptical beam contours line up with axes
         model.theta.fixed = True
         self._set_model(model)
+        # TODO Replace with fitting.LMLSQFitter once we depend on Astropy >= 5.1
         self._fit = fitting.LevMarLSQFitter(calc_uncertainties=True)
         self.expected_width = width
         self.is_valid = False
@@ -185,7 +186,7 @@ class BeamPatternFit:
         self._set_model(new_model)
         param_cov = self._fit.fit_info['param_cov']
         # The parameter cov matrix is absent if singular: be very uncertain then
-        # XXX Only an issue with LevMarLSQFitter - remove check for LMLSQFitter
+        # TODO Only an issue with LevMarLSQFitter - remove check for LMLSQFitter
         if param_cov is None:
             param_std = np.full(5, np.inf)
         else:
