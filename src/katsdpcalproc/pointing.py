@@ -245,7 +245,7 @@ def _voltage_beamwidths(beamwidth_factor, frequency, dish_diameter):
     return expected_width
 
 
-def beam_fit(data_points, ants, num_chunks=16, beam_center=(0.5, 0.5)):
+def beam_fit(data_points, ants, num_chunks=16, beam_center=(0.0, 0.0)):
     """Fit primary beams to receptor gains obtained at various offset pointings.
 
     Parameters
@@ -259,7 +259,7 @@ def beam_fit(data_points, ants, num_chunks=16, beam_center=(0.5, 0.5)):
     num_chunks : int, optional
         Group the frequency channels into this many sections to obtain
         pointing fits
-   beam_center : sequence of 2 floats
+   beam_center : sequence of 2 floats, optional
         Initial guess of 2-element beam center, in target coordinate units
     Returns
     -------
