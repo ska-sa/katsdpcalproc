@@ -12,7 +12,7 @@ from katsdpcalproc.delay import (mean_phase_diff, fft_coarse, fft_quadratic,
                               fft_leastsq, fft_secant)
 from katsdpcalproc.delay_mattieu import mattieu
 from katsdpcalproc.delay_mattieu2 import mattieu2
-from katsdpcal.calprocs import k_fit
+from katsdpcalproc.calprocs import k_fit
 
 
 FLUX = 10.
