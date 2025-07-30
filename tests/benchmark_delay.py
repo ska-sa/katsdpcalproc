@@ -12,6 +12,7 @@ from katsdpcalproc.delay import (mean_phase_diff, fft_coarse, fft_quadratic,
                               fft_leastsq, fft_secant)
 from katsdpcalproc.delay_mattieu import mattieu
 from katsdpcalproc.delay_mattieu2 import mattieu2
+from katsdpcalproc.delay_newton import fft_newton_delay
 from katsdpcalproc.calprocs import k_fit
 
 
@@ -21,7 +22,7 @@ DUMP_PERIOD = 120.0
 N_CHANS = 1024
 SAMPLE_RATE = 1712e6
 N_ANTS = 15
-METHODS = ('Ludwig', 'Laura', 'Lindsay', 'SKA', 'Secant')  # , 'Mattieu', 'Mattieu2')
+METHODS = ('Ludwig', 'Laura', 'Lindsay', 'SKA', 'Secant')  # , 'Newton', 'Mattieu', 'Mattieu2')
 RESULTS = 'perant'
 
 
@@ -107,6 +108,9 @@ def _estimate_slopes(x, fft_factor, chan_range, window, snr):
         elif method == 'Mattieu2':
             # Mattieu's new method
             estimates.append(mattieu2(x))
+        elif method == 'Newton':
+            # Mattieu's implementation of the Newton-Raphson method
+            estimates.append(fft_newton_delay(x, n_fft, discard_unconverged=True))
     return np.array(estimates)
 
 
