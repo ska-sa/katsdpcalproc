@@ -302,7 +302,7 @@ def wavg_full_f(data, flags, weights, chanav, threshold=0.8):
     # This would be simple with da.core.map_blocks, but it doesn't
     # support multiple outputs, so we need to do manual construction
     # of the dask graphs.
-    chunks = _align_chunks(data.chunks, {1: chanav})
+    chunks = _align_chunks(data.chunks, {-3: chanav})
     out_chunks = list(chunks)
     # Divide by chanav, rounding up
     # use axis -3 for freq, to support cases where time axis has been averaged away
