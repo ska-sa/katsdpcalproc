@@ -25,6 +25,225 @@ HIGH_WEIGHT = 1e15
 # --------------------------------------------------------------------------------------------------
 
 
+def k_fit_secant(data, weights, corrprod_lookup, chans, refant=0,
+                 cross=True, chan_sample=1, fft_factor=2,
+                 epsilon=1e-10, max_iters=100, discard_unconverged=True):
+    """Fit delays using an FFT coarse estimate and secant refinement.
+
+    Parameters
+    ----------
+    data : array of complex, shape (num_chans, num_pols, num_baselines)
+        Visibility data (may contain NaNs indicating completely flagged data).
+    weights : array of real, shape matching ``data``
+        Weight data, where non-positive values are treated as flagged.
+    corrprod_lookup : array of int, shape (num_baselines, 2)
+        Antenna index pairs associated with each baseline.
+    chans : sequence of float, length num_chans
+        Channel frequencies in Hz.
+    refant : int, optional
+        Reference antenna index.
+    cross : bool, optional
+        Assume cross-correlations and solve delays per antenna.
+    chan_sample : int, optional
+        Subsample channels by this amount before solving.
+    fft_factor : int, optional
+        Multiplier for FFT length used by coarse delay estimation.
+    epsilon : float, optional
+        Secant step-size convergence tolerance.
+    max_iters : int, optional
+        Maximum secant iterations per baseline.
+    discard_unconverged : bool, optional
+        If True, mark unconverged secant solutions as NaN.
+
+    Returns
+    -------
+    kdelay : array of float, shape (num_pols, num_ants)
+        Delay solutions per antenna in seconds.
+    """
+
+    chans = np.asarray(chans, dtype=np.float64)
+    corrprod_lookup = np.asarray(corrprod_lookup)
+    if chan_sample != 1:
+        data = data[::chan_sample, ...]
+        weights = weights[::chan_sample, ...]
+        chans = chans[::chan_sample]
+
+    chan_spacing = chans[1] - chans[0]
+    num_pol = data.shape[-2] if data.ndim > 2 else 1
+    num_ants = ants_from_bllist(corrprod_lookup)
+    n_bls = len(corrprod_lookup)
+    to_baseline = np.zeros((n_bls, num_ants), dtype=np.float64)
+    for n, (ant1, ant2) in enumerate(corrprod_lookup):
+        to_baseline[n, ant1] = -1.0
+        to_baseline[n, ant2] = +1.0
+    non_ref_cols = [i for i in range(num_ants) if i != refant]
+    to_baseline_nonref = to_baseline[:, non_ref_cols]
+
+    kdelay = []
+    for p in range(num_pol):
+        pol_data = data[:, p, :] if data.ndim > 2 else data          # (n_chans, n_bls)
+        pol_weights = weights[:, p, :] if weights.ndim > 2 else weights
+
+        good_pol_data = np.nan_to_num(pol_data)
+        good_pol_data *= (pol_weights > 0)
+
+        # delay via fft_secant (rad/channel -> seconds) ---
+        # fft_secant expects (n_bls, n_chans)
+        baseline_data = good_pol_data.T.astype(np.complex128)
+        n_fft = fft_factor * baseline_data.shape[-1]
+        coarse_bl = fft_secant(
+            baseline_data, n_fft=n_fft, epsilon=epsilon, max_iters=max_iters,
+            discard_unconverged=discard_unconverged)
+        delay_per_bl = -coarse_bl / (2.0 * np.pi * chan_spacing)  
+        if cross:
+            valid = np.isfinite(delay_per_bl)
+            ant_k = np.full(num_ants, np.nan, dtype=np.float64)
+            if np.count_nonzero(valid) >= len(non_ref_cols):
+                ant_k[refant] = 0.0
+                ant_k_nonref, _, _, _ = np.linalg.lstsq(
+                    to_baseline_nonref[valid], delay_per_bl[valid], rcond=None)
+                ant_k[non_ref_cols] = ant_k_nonref
+            else:
+                ant_k[refant] = 0.0
+                for ai in range(num_ants):
+                    mask = (corrprod_lookup == (ai, refant)).all(axis=1)
+                    if mask.any() and np.isfinite(delay_per_bl[mask]).any():
+                        ant_k[ai] = delay_per_bl[mask][0]
+                    mask = (corrprod_lookup == (refant, ai)).all(axis=1)
+                    if mask.any() and np.isfinite(delay_per_bl[mask]).any():
+                        ant_k[ai] = -delay_per_bl[mask][0]
+            kdelay.append(ant_k)
+
+    return np.stack(kdelay, axis=0)
+
+
+def _fft_abs_peak(x, NFFT):
+    absX = np.abs(np.fft.fft(x, NFFT))
+    fft_peak = absX.argmax(axis=-1)
+    return absX, fft_peak
+
+
+def _index_to_freq(k, NFFT):
+    deshift = np.where(k < NFFT // 2, k, k - NFFT)
+    return 2. * np.pi * deshift / NFFT
+
+
+def fft_coarse(x, NFFT=None):
+    """FFT (no interpolation, nearest bin)."""
+    if NFFT is None:
+        NFFT = np.shape(x)[-1]
+    _, fft_peak = _fft_abs_peak(x, NFFT)
+    return _index_to_freq(fft_peak, NFFT)
+
+
+def _deriv_fast(f, x, n, temp):
+    temp.real = 0.0
+    np.outer(-f, n, temp.imag)
+    np.exp(temp, temp)
+    temp *= x
+    X = temp.mean(axis=-1)
+    temp *= -1j * n
+    dX = temp.mean(axis=-1)
+    return 2 * (X * dX.conj()).real
+
+
+def _secant_fast(x, left, right, epsilon=1e-10, max_iters=100,
+                 discard_unconverged=False):
+    """Refine per-row frequency peaks with the secant method.
+
+    Parameters
+    ----------
+    x : array of complex, shape (n_signals, n_chans)
+        Input spectra.
+    left, right : array of float, shape (n_signals,)
+        Bracketing initial guesses in rad/channel.
+    epsilon : float, optional
+        Convergence tolerance on absolute secant step size.
+    max_iters : int, optional
+        Maximum secant iterations.
+    discard_unconverged : bool, optional
+        If True, unconverged solutions are set to NaN.
+
+    Returns
+    -------
+    array of float, shape (n_signals,)
+        Refined frequency estimates in rad/channel.
+    """
+    delta = np.ones_like(left)
+    active = delta >= epsilon
+    N = np.shape(x)[-1]  # get the number of channels in the input signal x
+    n = np.arange(N, dtype=float)
+    temp = np.empty(x.shape, dtype=np.complex128)
+    f_old = left.copy()
+    f_new = right.copy()
+    d_old = _deriv_fast(f_old, x, n, temp)
+    d_new = _deriv_fast(f_new, x, n, temp)
+    iteration = 0
+    while np.any(active) and iteration < max_iters:
+        iteration += 1
+        with np.errstate(divide='ignore', invalid='ignore'):
+            delta = d_new * (f_new - f_old) / (d_new - d_old)
+        delta[np.isnan(delta)] = 0.0
+        active = ~np.isinf(delta) & (np.abs(delta) >= epsilon)
+        f_old[:] = f_new
+        d_old[:] = d_new
+        f_new[active] = f_old[active] - delta[active]
+        d_new[active] = _deriv_fast(f_new[active], x[active], n, temp[:sum(active)])
+    if discard_unconverged:
+        unconverged = np.isinf(delta) | active
+        f_new[unconverged] = np.nan
+    return f_new
+
+
+def fft_secant(x, n_fft=None, epsilon=1e-10, max_iters=100,
+               discard_unconverged=False, NFFT=None):
+    """Estimate frequency peaks via FFT initialisation and secant refinement.
+
+    Parameters
+    ----------
+    x : array of complex, shape (..., n_chans)
+        Input data with frequency/channel on the final axis.
+    n_fft : int, optional
+        FFT length for coarse peak search. Defaults to ``n_chans``.
+    epsilon : float, optional
+        Convergence tolerance on secant step size.
+    max_iters : int, optional
+        Maximum secant iterations.
+    discard_unconverged : bool, optional
+        If True, unconverged solutions are set to NaN.
+    NFFT : int, optional
+        Backward-compatible alias for ``n_fft``.
+
+    Returns
+    -------
+    array of float, shape (...,)
+        Frequency estimates in rad/channel.
+    """
+    if n_fft is not None and NFFT is not None:
+        raise ValueError('Only one of n_fft or NFFT may be specified')
+    if n_fft is None:
+        n_fft = NFFT
+
+    front_shape = x.shape[:x.ndim - 1]
+    if front_shape != ():
+        x = x.reshape(-1, x.shape[-1])
+    if n_fft is None:
+        n_fft = np.shape(x)[-1]
+    initial_guess = fft_coarse(x, n_fft)
+    coarse_bin_width = 2 * np.pi / n_fft
+    left = initial_guess - 0.5 * coarse_bin_width
+    right = initial_guess + 0.5 * coarse_bin_width
+    freq = _secant_fast(
+        x, left, right,
+        epsilon=epsilon,
+        max_iters=max_iters,
+        discard_unconverged=discard_unconverged
+    )
+    if front_shape != ():
+        freq = freq.reshape(front_shape)
+    return freq
+
+
 def radec_to_lm(ra, dec, ra0, dec0):
     """Obtain direction cosines of (ra, dec) relative to (ra0, dec0).
 

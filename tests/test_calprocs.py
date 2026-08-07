@@ -245,6 +245,129 @@ class TestStefcal(unittest.TestCase):
         self._test_stefcal_timing(noise=1e-3)
 
 
+class TestDelaySolvers(unittest.TestCase): 
+    # create unit tests for the k_fit_secant and k_fit functions
+    """Tests for secant-based delay fitting helpers secant solver and k_fit solver."""
+
+    def _phase_ramp(self, freqs, n_chans):
+        """ Create some complex data with an injected linear phase ramp corresponding to a known delay for the tests."""
+        n = np.arange(n_chans, dtype=np.float64)
+        return np.exp(1j * freqs[..., np.newaxis] * n)
+
+    def _make_ant_data(self, ant_delays, n_chans=128, n_pols=1):
+        chans = np.linspace(1.0e9, 1.2e9, n_chans, dtype=np.float64)
+        corrprod_lookup = np.array([[0, 1], [0, 2], [1, 2]], dtype=np.int64)
+        bl_delays = ant_delays[corrprod_lookup[:, 1]] - ant_delays[corrprod_lookup[:, 0]]
+        vis = np.exp(-2j * np.pi * chans[:, np.newaxis] * bl_delays[np.newaxis, :])
+        if n_pols > 1:
+            data = np.stack([vis for _ in range(n_pols)], axis=1)
+        else:
+            data = vis[:, np.newaxis, :]
+        weights = np.ones_like(data.real, dtype=np.float32)
+        return chans, corrprod_lookup, data, weights
+
+    def test_fft_secant_estimates(self):
+        n_chans = 4096 # self setup
+        true_freq = np.array([[0.15, -0.37], [0.62, -1.21]], dtype=np.float64)
+        x = self._phase_ramp(true_freq, n_chans)
+
+        est = calprocs.fft_secant(x, n_fft=4 * n_chans)
+
+        self.assertEqual(est.shape, true_freq.shape)
+        np.testing.assert_allclose(est, true_freq, atol=1e-4, rtol=0)
+
+    def test_fft_secant_nfft_alias_compatibility(self):
+        n_chans = 4096
+        f = np.array([0.33, -0.91], dtype=np.float64)
+        x = self._phase_ramp(f, n_chans)
+
+        est_new = calprocs.fft_secant(x, n_fft=2 * n_chans)
+        est_old = calprocs.fft_secant(x, NFFT=2 * n_chans)
+        np.testing.assert_allclose(est_new, est_old, atol=0, rtol=0)
+
+        with self.assertRaises(ValueError):
+            calprocs.fft_secant(x, n_fft=2 * n_chans, NFFT=2 * n_chans)
+
+    def test_secant_fast(self):
+
+        """Test that the secant solver recovers a known phase slope.
+        This is not the delay in seconds, but the phase slope in radians per channel.
+        The phase slope is added to the phase of a complex tone, and the secant solver is used to recover it."""
+
+        n_chans = 4096
+        true_phase_slope = np.array([0.44], dtype=np.float64)
+        x = self._phase_ramp(true_phase_slope, n_chans)
+        print(x)
+        print(x.shape)
+        left = true_phase_slope - 0.2
+        right = true_phase_slope + 0.2
+
+        est = calprocs._secant_fast(x, left, right, epsilon=1e-10, max_iters=100)
+        print(f'print the est: {est}')
+        np.testing.assert_allclose(est, true_phase_slope, atol=1e-6, rtol=0)
+
+        unconverged = calprocs._secant_fast(
+            x, left, right, epsilon=1e-10, max_iters=0, discard_unconverged=True)
+        self.assertTrue(np.isnan(unconverged[0]))
+
+    def test_k_fit_secant_recovers_delays(self):
+        ant_delays = np.array([0.0, 8e-12, -5e-12], dtype=np.float64)
+        chans, corrprod_lookup, data, weights = self._make_ant_data(ant_delays, n_pols=2)
+        kdelay = calprocs.k_fit_secant(data, weights, corrprod_lookup, chans)
+        #kdelay_kfit = calprocs.k_fit(data, weights, corrprod_lookup, chans)
+        print(f'print the kdelay: {kdelay}')
+        #print(f'print the kdelay_kfit: {kdelay_kfit}')
+        self.assertEqual(kdelay.shape, (2, 3))
+        np.testing.assert_allclose(kdelay[0], ant_delays, atol=3e-10, rtol=0)
+        np.testing.assert_allclose(kdelay[1], ant_delays, atol=3e-10, rtol=0)
+
+
+    def test_k_fit_recovers_delays(self):
+        ant_delays = np.array([0.0, 8e-12, -5e-12], dtype=np.float64)
+        chans, corrprod_lookup, data, weights = self._make_ant_data(ant_delays, n_pols=2)
+        k_fit_delay = calprocs.k_fit(data, weights, corrprod_lookup, chans)        
+        self.assertEqual(k_fit_delay.shape, (2, 3))
+        np.testing.assert_allclose(k_fit_delay[0], ant_delays, atol=3e-10, rtol=0)
+        np.testing.assert_allclose(k_fit_delay[1], ant_delays, atol=3e-10, rtol=0)
+
+    
+
+
+    def test_k_fit_secant_channel_subsampling_consistency(self):
+        ant_delays = np.array([0.0, 5e-9, 9e-9], dtype=np.float64)
+        chans, corrprod_lookup, data, weights = self._make_ant_data(ant_delays)
+
+        full = calprocs.k_fit_secant(data, weights, corrprod_lookup, chans, chan_sample=1)
+        print(f'print the full channel: {full}')
+        sampled = calprocs.k_fit_secant(data, weights, corrprod_lookup, chans, chan_sample=2)
+        print(sampled)
+
+        np.testing.assert_allclose(full, sampled, atol=5e-10, rtol=0)
+
+    def test_k_fit_secant_nans_do_not_force_failure(self):
+        """NaNs are zero-filled internally, so they do not automatically fail fits."""
+        ant_delays = np.array([0.0, 5e-9, 9e-9], dtype=np.float64) # typical antenna delays
+        chans, corrprod_lookup, data, weights = self._make_ant_data(ant_delays)
+        data = data.copy()
+        data[10:20, 0, 1] = np.nan
+
+        kdelay = calprocs.k_fit_secant(data, weights, corrprod_lookup, chans)
+
+        self.assertTrue(np.all(np.isfinite(kdelay)))
+
+    def test_k_fit_secant_failed_secant_gives_nan_delays(self):
+        """If secant is forced not to iterate, non-reference delays fail as NaN."""
+        ant_delays = np.array([0.0, 6e-9, -3e-9], dtype=np.float64)
+        chans, corrprod_lookup, data, weights = self._make_ant_data(ant_delays)
+
+        kdelay = calprocs.k_fit_secant(data, weights, corrprod_lookup, chans, max_iters=0,  discard_unconverged=True)
+
+        self.assertEqual(kdelay.shape, (1, 3))
+        self.assertEqual(kdelay[0, 0], 0.0)
+        self.assertTrue(np.isnan(kdelay[0, 1]))
+        self.assertTrue(np.isnan(kdelay[0, 2]))
+
+
 class TestWavgFullF(unittest.TestCase):
     """Tests for :func:`katsdpcalproc.calprocs.wavg_full_f`"""
     def setUp(self):
