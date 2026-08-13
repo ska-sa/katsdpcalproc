@@ -242,7 +242,7 @@ for flux in fluxes:
 fig, ax = plot_loglog(fluxes, np.array(delay_std))
 ax.set_xlabel('Calibrator flux [Jy]')
 ax.set_title(f'Delay estimator performance vs flux (N={N_CHANS})')
-fig.savefig('delay_per_bl_vs_flux.png')
+# fig.savefig('delay_per_bl_vs_flux.png')
 
 log_sizes = np.arange(7, 14)
 delay_std = []
@@ -252,7 +252,7 @@ for log_size in log_sizes:
 fig, ax = plot_loglog(2 ** log_sizes, np.array(delay_std))
 ax.set_xlabel('Number of samples (N)')
 ax.set_title(f'Delay estimator performance vs N (flux={FLUX})')
-fig.savefig('delay_per_bl_vs_N.png')
+# fig.savefig('delay_per_bl_vs_N.png')
 
 t = np.arange(N_CHANS) / N_CHANS
 flux_shape = 1.6 * np.exp(-0.65 * np.log(t + 1))
@@ -282,7 +282,7 @@ for flux in fluxes:
 fig, ax = plot_loglog(fluxes, np.array(delay_std))
 ax.set_xlabel('Calibrator flux [Jy]')
 ax.set_title(f'Realistic delay estimator performance (N={N_CHANS})')
-fig.savefig('delay_per_bl_realistic.png')
+# fig.savefig('delay_per_bl_realistic.png')
 
 fluxes = np.array([0.1, 0.2, 0.5, 1., 2., 5., 10., 20., 50., 100.])
 delay_std = []
@@ -298,7 +298,7 @@ for flux in fluxes:
 fig, ax = plot_loglog(fluxes, np.array(delay_std), k_fit=True)
 ax.set_xlabel('Calibrator flux [Jy]')
 ax.set_title(f'Delay errors ({RESULTS}, chans={N_CHANS}, ants={N_ANTS})')
-fig.savefig(f'delay_basic_ant{N_ANTS}_chan{N_CHANS}_{RESULTS}.png')
+# fig.savefig(f'delay_basic_ant{N_ANTS}_chan{N_CHANS}_{RESULTS}.png')
 
 fluxes = np.array([0.1, 0.2, 0.5, 1., 2., 5., 10., 20., 50., 100.])
 delay_std = []
@@ -316,6 +316,6 @@ for flux in fluxes:
 fig, ax = plot_loglog(fluxes, np.array(delay_std), k_fit=True)
 ax.set_xlabel('Calibrator flux [Jy]')
 ax.set_title(f'Delay errors ({RESULTS}, chans={N_CHANS}, ants={N_ANTS})')
-fig.savefig(f'delay_realistic_ant{N_ANTS}_chan{N_CHANS}_{RESULTS}.png')
+# fig.savefig(f'delay_realistic_ant{N_ANTS}_chan{N_CHANS}_{RESULTS}.png')
 
 plt.show()
