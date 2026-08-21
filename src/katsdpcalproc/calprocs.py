@@ -15,6 +15,7 @@ import numba
 import katpoint
 
 from katdal.applycal import complex_interp
+from katsdpcalproc.delay import fft_secant
 
 logger = logging.getLogger(__name__)
 
@@ -594,6 +595,98 @@ def k_fit(data, weights, corrprod_lookup, chans, refant=0, cross=True, chan_samp
         kdelay.append(coarse_k + delta_k)
 
     return np.atleast_2d(kdelay)
+
+
+def k_fit_secant(data, weights, corrprod_lookup, chans, refant=0,
+                 cross=True, chan_sample=1, fft_factor=2,
+                 epsilon=1e-10, max_iters=100, discard_unconverged=True):
+    """Fit delays using Secant method.
+
+    Parameters
+    ----------
+    data : array of complex, shape (num_chans, num_pols, num_baselines)
+        Visibility data (may contain NaNs indicating completely flagged data).
+    weights : array of real, shape matching ``data``
+        Weight data, where non-positive values are treated as flagged.
+    corrprod_lookup : array of int, shape (num_baselines, 2)
+        Antenna index pairs associated with each baseline.
+    chans : sequence of float, length num_chans
+        Channel frequencies in Hz.
+    refant : int, optional
+        Reference antenna index.
+    cross : bool, optional
+        Assume cross-correlations and solve delays per antenna.
+    chan_sample : int, optional
+        Subsample channels by this amount before solving.
+    fft_factor : int, optional
+        Multiplier for FFT length used by coarse delay estimation.
+    epsilon : float, optional
+        Secant step-size convergence tolerance.
+    max_iters : int, optional
+        Maximum secant iterations per baseline.
+    discard_unconverged : bool, optional
+        If True, mark unconverged secant solutions as NaN.
+
+    Returns
+    -------
+    kdelay : array of float, shape (num_pols, num_ants)
+        Delay solutions per antenna in seconds.
+    """
+
+    chans = np.asarray(chans, dtype=np.float64)
+    corrprod_lookup = np.asarray(corrprod_lookup)
+    if chan_sample != 1:
+        data = data[::chan_sample, ...]
+        weights = weights[::chan_sample, ...]
+        chans = chans[::chan_sample]
+
+    chan_spacing = chans[1] - chans[0]
+    num_pol = data.shape[-2] if data.ndim > 2 else 1
+    num_ants = ants_from_bllist(corrprod_lookup)
+    n_bls = len(corrprod_lookup)
+    to_baseline = np.zeros((n_bls, num_ants), dtype=np.float64)
+    for n, (ant1, ant2) in enumerate(corrprod_lookup):
+        to_baseline[n, ant1] = -1.0
+        to_baseline[n, ant2] = +1.0
+    non_ref_cols = [i for i in range(num_ants) if i != refant]
+    to_baseline_nonref = to_baseline[:, non_ref_cols]
+
+    kdelay = []
+    for p in range(num_pol):
+        pol_data = data[:, p, :] if data.ndim > 2 else data          # (n_chans, n_bls)
+        pol_weights = weights[:, p, :] if weights.ndim > 2 else weights
+
+        good_pol_data = np.nan_to_num(pol_data)
+        good_pol_data *= (pol_weights > 0)
+
+        # delay via fft_secant (rad/channel -> seconds) ---
+        # fft_secant expects (n_bls, n_chans)
+        baseline_data = good_pol_data.T.astype(np.complex128)
+        n_fft = fft_factor * baseline_data.shape[-1]
+        coarse_bl = fft_secant(
+            baseline_data, NFFT=n_fft, epsilon=epsilon, max_iters=max_iters,
+            discard_unconverged=discard_unconverged)
+        delay_per_bl = -coarse_bl / (2.0 * np.pi * chan_spacing)
+        if cross:
+            valid = np.isfinite(delay_per_bl)
+            ant_k = np.full(num_ants, np.nan, dtype=np.float64)
+            if np.count_nonzero(valid) >= len(non_ref_cols):
+                ant_k[refant] = 0.0
+                ant_k_nonref, _, _, _ = np.linalg.lstsq(
+                    to_baseline_nonref[valid], delay_per_bl[valid], rcond=None)
+                ant_k[non_ref_cols] = ant_k_nonref
+            else:
+                ant_k[refant] = 0.0
+                for ai in range(num_ants):
+                    mask = (corrprod_lookup == (ai, refant)).all(axis=1)
+                    if mask.any() and np.isfinite(delay_per_bl[mask]).any():
+                        ant_k[ai] = delay_per_bl[mask][0]
+                    mask = (corrprod_lookup == (refant, ai)).all(axis=1)
+                    if mask.any() and np.isfinite(delay_per_bl[mask]).any():
+                        ant_k[ai] = -delay_per_bl[mask][0]
+            kdelay.append(ant_k)
+
+    return np.stack(kdelay, axis=0)
 
 
 def normalise_complex(x, weights=None, axis=0):

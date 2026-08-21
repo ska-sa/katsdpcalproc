@@ -6,6 +6,7 @@ import time
 import numpy as np
 
 from katsdpcalproc import calprocs
+from katsdpcalproc import delay
 
 from katsdpcalproc.solutions import CalSolution, CalSolutionStore
 
@@ -871,3 +872,191 @@ class TestBestRefAnt(unittest.TestCase):
         self.vis[:, 0, noisy_mask] *= np.exp(1.j * extra_noise)
         candidate_ants = calprocs.best_refant(self.vis, self.bls, self.freqs)
         assert 2 not in candidate_ants
+
+
+class TestDelaySolvers(unittest.TestCase):
+    """Tests for secant-based delay solving."""
+
+    FLUX = 10.0
+    SEFD = 400.0
+    DUMP_PERIOD = 120.0
+    N_CHANS = 1024
+    SAMPLE_RATE = 1712e6
+    N_ANTS = 15
+
+    def setUp(self):
+        self.random_state = np.random.RandomState(seed=1)
+        self.ant_delays = np.array([0.0, 8e-12, -5e-12], dtype=np.float64)
+
+    def _calculate_params(self, sample_rate, n_chans, dump_period, ampl, sefd):
+        bandwidth = sample_rate / 2
+        channel_width = bandwidth / n_chans
+        n = np.arange(n_chans, dtype=float)
+        channel_freqs = bandwidth + n * channel_width
+        delay_alias = 1 / channel_width
+        samples = dump_period / delay_alias
+        noise_var = 2 * sefd * sefd / samples
+        snr = np.inf if noise_var == 0.0 else ampl * ampl / noise_var
+        return channel_freqs, delay_alias, noise_var, snr
+
+    def _ant_vs_baseline(self, n_ants):
+        baselines = np.c_[np.triu_indices(n_ants, 1)]
+        to_baseline = np.zeros((len(baselines), n_ants))
+        for n, (ant1, ant2) in enumerate(baselines):
+            to_baseline[n, ant1] = -1.0
+            to_baseline[n, ant2] = +1.0
+        to_ant = np.linalg.pinv(to_baseline[:, 1:])
+        return baselines, to_baseline, to_ant
+
+    def _generate_data(self, slopes, channel_freqs, ampl, noise_var,
+                       window=None, tec=0, add_spike=True):
+        n_slopes = len(slopes)
+        n_chans = len(channel_freqs)
+        phase = 2. * np.pi * self.random_state.rand(n_slopes)
+        noise = (self.random_state.randn(n_slopes, n_chans)
+                 + 1j * self.random_state.randn(n_slopes, n_chans))
+        n = np.arange(n_chans, dtype=float)
+
+        v = channel_freqs[:, np.newaxis] / 1e9
+        baseline_km = 8
+        iono = np.radians(0.26 * tec * baseline_km / v)
+
+        angle = np.outer(n, slopes) + phase + iono
+        x = ampl * np.exp(1j * angle.T) + np.sqrt(noise_var / 2) * noise
+        if add_spike:
+            x[:, n_chans // 4] += 10 * n_chans
+        if window is not None:
+            x *= np.atleast_2d(window)
+        return x
+
+    def _make_ant_data(self, ant_delays, n_pols=1, n_chans=4096):
+        """Generate synthetic cross-correlations from per-antenna delays."""
+        ant_delays = np.asarray(ant_delays, dtype=np.float64)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            chans, delay_alias, _, _ = self._calculate_params(
+                self.SAMPLE_RATE, n_chans, self.DUMP_PERIOD, self.FLUX, 0.0)
+        corrprod_lookup, to_baseline, _ = self._ant_vs_baseline(len(ant_delays))
+        slopes_per_ant = -2.0 * np.pi * ant_delays / delay_alias
+        slopes_per_bl = slopes_per_ant @ to_baseline.T
+        baseline_vis = self._generate_data(
+            slopes_per_bl, chans, ampl=1.0, noise_var=0.0, add_spike=False)
+        data = np.repeat(baseline_vis.T[:, np.newaxis, :], n_pols, axis=1).astype(np.complex64)
+        weights = np.ones_like(data, dtype=np.float32)
+        return chans, corrprod_lookup, data, weights
+
+    def test_fft_secant_estimates(self):
+        "Test that the fft_secant solver recovers known phase slopes."
+        n_chans = self.N_CHANS
+        true_freq = np.array([[0.15, -0.37], [0.62, -1.21]], dtype=np.float64)
+        freqs, _, _, _ = self._calculate_params(
+            self.SAMPLE_RATE, n_chans, self.DUMP_PERIOD, self.FLUX, self.SEFD)
+        x = self._generate_data(
+            true_freq.reshape(-1), freqs, ampl=1.0, noise_var=0.0, add_spike=False)
+
+        est = delay.fft_secant(x, NFFT=4 * n_chans).reshape(true_freq.shape)
+
+        self.assertEqual(est.shape, true_freq.shape)
+        np.testing.assert_allclose(est, true_freq, rtol=1e-4)
+
+    def test_fft_secant_estimates_noisy(self):
+        "Test that the fft_secant solver recovers known phase slopes in the presence of noise."
+        n_chans = self.N_CHANS
+        true_freq = np.array([[0.15, -0.37], [0.62, -1.21]], dtype=np.float64)
+        freqs, _, noise_var, _ = self._calculate_params(
+            self.SAMPLE_RATE, n_chans, self.DUMP_PERIOD, self.FLUX, self.SEFD)
+        x = self._generate_data(
+            true_freq.reshape(-1), freqs, ampl=1.0, noise_var=noise_var, add_spike=False)
+
+        est = delay.fft_secant(x, NFFT=4 * n_chans).reshape(true_freq.shape)
+
+        self.assertEqual(est.shape, true_freq.shape)
+        np.testing.assert_allclose(est, true_freq, atol=5e-3, rtol=0)
+
+    def test_secant_fast(self):
+        """Test that the secant solver recovers a known phase slope."""
+        n_chans = self.N_CHANS
+        true_phase_slope = np.array([0.44], dtype=np.float64)
+        chans, _, _, _ = self._calculate_params(
+            self.SAMPLE_RATE, n_chans, self.DUMP_PERIOD, self.FLUX, self.SEFD)
+        x = self._generate_data(
+            true_phase_slope, chans, ampl=1.0, noise_var=0.0, add_spike=False)
+        left = true_phase_slope - 0.2
+        right = true_phase_slope + 0.2
+
+        est = delay._secant_fast(x, left, right, epsilon=1e-10, max_iters=100,
+                                 discard_unconverged=False)
+        np.testing.assert_allclose(est, true_phase_slope, atol=1e-6, rtol=0)
+
+        unconverged = delay._secant_fast(x, left, right, epsilon=1e-10, max_iters=0,
+                                         discard_unconverged=True)
+        self.assertTrue(np.isnan(unconverged[0]))
+
+    def test_secant_fast_flagged_masked_channels(self):
+        """Test noisy masked channels should still yield a usable secant estimate."""
+        n_chans = self.N_CHANS
+        true_phase_slope = np.array([0.44], dtype=np.float64)
+        chans, _, noise, _ = self._calculate_params(
+            self.SAMPLE_RATE, n_chans, self.DUMP_PERIOD, self.FLUX, self.SEFD)
+        x = self._generate_data(
+            true_phase_slope, chans, ampl=1.0, noise_var=0.0, add_spike=False)
+
+        channel_mask = np.ones(n_chans, dtype=np.float64)
+        channel_mask[10:900] = 0.0
+        x *= channel_mask[np.newaxis, :]
+
+        left = true_phase_slope - 0.2
+        right = true_phase_slope + 0.2
+        est = delay._secant_fast(x, left, right, epsilon=1e-10, max_iters=100,
+                                 discard_unconverged=True)
+        print(est)
+        print(true_phase_slope)
+        np.testing.assert_allclose(est, true_phase_slope, atol=1e-12, rtol=0)
+
+        # self.assertTrue(np.isfinite(est[0]))
+        # self.assertLess(np.abs(est[0] - true_phase_slope[0]), 0.25)
+
+    def test_k_fit_secant_recovers_delays(self):
+        "Test that the k_fit_secant solver recovers known per-antenna delays."
+        ant_delays = self.ant_delays
+        chans, corrprod_lookup, data, weights = self._make_ant_data(ant_delays, n_pols=2)
+        kdelay = calprocs.k_fit_secant(data, weights, corrprod_lookup, chans)
+
+        self.assertEqual(kdelay.shape, (2, 3))
+        np.testing.assert_allclose(kdelay[0], ant_delays, atol=3e-11)
+        np.testing.assert_allclose(kdelay[1], ant_delays, atol=3e-11)
+
+    def test_k_fit_secant_on_flagged_channels(self):
+        """Flagged channels should not break secant delay recovery."""
+        n_chans = self.N_CHANS
+        ant_delays = self.ant_delays
+        chans, corrprod_lookup, data, weights = self._make_ant_data(
+            ant_delays, n_pols=1, n_chans=n_chans)
+
+        # Simulate aggressive RFI excision: mask a contiguous 50% of channels
+        # what is a good fraction to test for narrowband RFI excision?
+        channel_mask = np.ones(n_chans, dtype=np.float32)
+        channel_mask[20:70] = 0.0
+
+        _, _, noise_var, _ = self._calculate_params(
+            self.SAMPLE_RATE, n_chans, self.DUMP_PERIOD, self.FLUX, self.SEFD)
+        noise = (self.random_state.randn(*data.shape) + 1j * self.random_state.randn(*data.shape))
+        noisy_data = data + noise.astype(np.complex64) * np.sqrt(noise_var / 2.0)
+
+        # In flagged channels both weights and visibilities are zeroed in the pipeline.
+        weights = weights * channel_mask[:, np.newaxis, np.newaxis]
+        noisy_data = noisy_data * channel_mask[:, np.newaxis, np.newaxis]
+
+        kdelay = calprocs.k_fit_secant(noisy_data, weights, corrprod_lookup, chans)
+
+        self.assertEqual(kdelay.shape, (1, 3))
+        np.testing.assert_allclose(kdelay[0], ant_delays, atol=1e-12, rtol=0)
+
+    def test_k_fit_recovers_delays(self):
+        "Test that the k_fit solver recovers known per-antenna delays."
+        ant_delays = self.ant_delays
+        chans, corrprod_lookup, data, weights = self._make_ant_data(ant_delays, n_pols=2)
+        k_fit_delay = calprocs.k_fit(data, weights, corrprod_lookup, chans)
+
+        self.assertEqual(k_fit_delay.shape, (2, 3))
+        np.testing.assert_allclose(k_fit_delay[0], ant_delays, atol=3e-11)
+        np.testing.assert_allclose(k_fit_delay[1], ant_delays, atol=3e-11)
