@@ -605,13 +605,13 @@ def k_fit_secant(data, weights, corrprod_lookup, chans, refant=0,
     Parameters
     ----------
     data : array of complex, shape (num_chans, num_pols, num_baselines)
-        Visibility data (may contain NaNs indicating completely flagged data).
-    weights : array of real, shape matching ``data``
-        Weight data, where non-positive values are treated as flagged.
-    corrprod_lookup : array of int, shape (num_baselines, 2)
-        Antenna index pairs associated with each baseline.
+            Visibility data (may contain NaNs indicating completely flagged data)
+    weights : array of real, shape (num_sol, num_chans, baseline)
+        Weight data, must be zero for flagged data and NaNed data
+    corrprod_lookup : array of int, shape (num_baselines/num_ant, 2)
+        Pairs of antenna indices associated with each baseline
     chans : sequence of float, length num_chans
-        Channel frequencies in Hz.
+        Channel frequencies in Hz
     refant : int, optional
         Reference antenna index.
     cross : bool, optional

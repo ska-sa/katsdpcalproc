@@ -888,6 +888,9 @@ class TestDelaySolvers(unittest.TestCase):
         self.random_state = np.random.RandomState(seed=1)
         self.ant_delays = np.array([0.0, 8e-12, -5e-12], dtype=np.float64)
 
+    def _wrap_angle(self, th):
+        return (th + np.pi) % (2. * np.pi) - np.pi
+
     def _calculate_params(self, sample_rate, n_chans, dump_period, ampl, sefd):
         bandwidth = sample_rate / 2
         channel_width = bandwidth / n_chans
@@ -972,8 +975,19 @@ class TestDelaySolvers(unittest.TestCase):
         self.assertEqual(est.shape, true_freq.shape)
         np.testing.assert_allclose(est, true_freq, atol=5e-3, rtol=0)
 
+    def test_secant_on_steep_slopes(self):
+        """Test the secant solver on phase slopes near the FFT alias boundary."""
+        n_chans = self.N_CHANS
+        nfft = 2 * n_chans
+        steep_slopes = 2 * np.pi * np.array([n_chans - 0.45, n_chans, n_chans + 0.45]) / nfft
+        steep_signals = np.exp(1j * np.outer(steep_slopes, np.arange(n_chans)))
+        steep_slope_estimates = delay.fft_secant(steep_signals, NFFT=nfft)
+        residuals = self._wrap_angle(steep_slope_estimates - steep_slopes)
+        np.testing.assert_allclose(residuals, 0.0, atol=1e-10)
+
     def test_secant_fast(self):
-        """Test that the secant solver recovers a known phase slope."""
+        """Test that the secant solver recovers a known phase slope and
+          test that unconverged values are NaN when discard_unconverged is True"""
         n_chans = self.N_CHANS
         true_phase_slope = np.array([0.44], dtype=np.float64)
         chans, _, _, _ = self._calculate_params(
@@ -985,7 +999,7 @@ class TestDelaySolvers(unittest.TestCase):
 
         est = delay._secant_fast(x, left, right, epsilon=1e-10, max_iters=100,
                                  discard_unconverged=False)
-        np.testing.assert_allclose(est, true_phase_slope, atol=1e-6, rtol=0)
+        np.testing.assert_allclose(est, true_phase_slope, atol=1e-10, rtol=0)
 
         unconverged = delay._secant_fast(x, left, right, epsilon=1e-10, max_iters=0,
                                          discard_unconverged=True)
@@ -1008,12 +1022,7 @@ class TestDelaySolvers(unittest.TestCase):
         right = true_phase_slope + 0.2
         est = delay._secant_fast(x, left, right, epsilon=1e-10, max_iters=100,
                                  discard_unconverged=True)
-        print(est)
-        print(true_phase_slope)
         np.testing.assert_allclose(est, true_phase_slope, atol=1e-12, rtol=0)
-
-        # self.assertTrue(np.isfinite(est[0]))
-        # self.assertLess(np.abs(est[0] - true_phase_slope[0]), 0.25)
 
     def test_k_fit_secant_recovers_delays(self):
         "Test that the k_fit_secant solver recovers known per-antenna delays."
@@ -1037,8 +1046,8 @@ class TestDelaySolvers(unittest.TestCase):
         channel_mask = np.ones(n_chans, dtype=np.float32)
         channel_mask[20:70] = 0.0
 
-        _, _, noise_var, _ = self._calculate_params(
-            self.SAMPLE_RATE, n_chans, self.DUMP_PERIOD, self.FLUX, self.SEFD)
+        _, _, noise_var, _ = self._calculate_params(self.SAMPLE_RATE, n_chans, self.DUMP_PERIOD,
+                                                    self.FLUX, self.SEFD)
         noise = (self.random_state.randn(*data.shape) + 1j * self.random_state.randn(*data.shape))
         noisy_data = data + noise.astype(np.complex64) * np.sqrt(noise_var / 2.0)
 
