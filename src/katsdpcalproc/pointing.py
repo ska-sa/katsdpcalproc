@@ -242,8 +242,16 @@ def _voltage_beamwidths(beamwidth_factor, frequency, dish_diameter):
     # Convert power beamwidth to gain / voltage beamwidth
     expected_width = np.sqrt(2.0) * expected_width
     # XXX This assumes we are still using default ant.beamwidth of 1.22
-    # and also handles larger effective dish diameter in H direction
-    expected_width = (0.8 * expected_width, 0.9 * expected_width)
+    if frequency < 1740e6:
+        # L Band / UHF band
+        # Larger effective dish diameter in H direction
+        expected_width = (0.8 * expected_width, 0.9 * expected_width)
+    elif dish_diameter > 14:
+        # MeerKAT Extension S band
+        expected_width = (0.93 * expected_width, 0.93 * expected_width)
+    else:
+        # MeerKAT S band
+        expected_width = (expected_width, 1.02 * expected_width)
     return expected_width
 
 
