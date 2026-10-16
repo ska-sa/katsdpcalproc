@@ -275,7 +275,7 @@ def beam_fit(data_points, ants, num_chunks=16, beam_center=(0.0, 0.0)):
         data = data.reshape(-1, num_chunks)
         ant = ants[a]
         # Iterate over frequency chunks but discard typically dodgy band edges
-        for chunk in range(1, num_chunks - 1):
+        for chunk in range(2, num_chunks - 3):
             chunk_data = data[:, chunk]
             is_valid = np.nonzero(~np.isnan(chunk_data['gain']) & (chunk_data['weight'] > 0.))[0]
             chunk_data = chunk_data[is_valid]
