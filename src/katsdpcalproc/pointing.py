@@ -68,7 +68,9 @@ def get_offset_gains(bp_gains, offsets, ants, channel_freqs, pols, num_chunks=16
                 masked_gain = np.ma.masked_invalid(bp_gain)
                 abs_gain_chunked = np.abs(masked_gain).reshape(num_chunks, -1)
                 abs_gain_mean = abs_gain_chunked.mean(axis=1)
-                abs_gain_std = abs_gain_chunked.std(axis=1)
+                # Assume bandpass is smooth and rather estimate the "fuzz" on it, else
+                # flat parts of spectrum are unfairly advantaged over steep parts.
+                abs_gain_std = np.diff(abs_gain_chunked, axis=1).std(axis=1)
                 abs_gain_var = abs_gain_std.filled(np.inf) ** 2
                 # Replace any zero variance with the smallest non-zero variance
                 # across chunks, but if all are zero it is fishy and ignored.
