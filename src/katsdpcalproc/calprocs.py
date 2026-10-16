@@ -9,6 +9,11 @@ import ast
 import logging
 
 import numpy as np
+# XXX Remove check when we move to NumPy 1.25+ in dockerbase
+if np.lib.NumpyVersion(np.__version__) >= '1.25.0':
+    from numpy.exceptions import AxisError
+else:
+    from numpy import AxisError
 import scipy.fftpack
 import numba
 
@@ -1296,7 +1301,7 @@ def wavg_flags_f(flags, chanav, excise, axis):
         if `flags` and `excise` have different shapes
     ValueError
         if chanav doesn't divide into the length of the chosen axis
-    np.AxisError
+    NumPy AxisError
         if `axis` is invalid
     NotImplementedError
         if there are more than two axes after `axis` or more than one axis
@@ -1309,8 +1314,8 @@ def wavg_flags_f(flags, chanav, excise, axis):
     if axis < 0:
         axis += flags.ndim
     if axis < 0 or axis >= flags.ndim:
-        raise np.AxisError('axis {} is out of bounds for array of dimension {}'
-                           .format(axis, flags.ndim))
+        raise AxisError('axis {} is out of bounds for array of dimension {}'
+                        .format(axis, flags.ndim))
     if axis > 1 or flags.ndim - axis > 3:
         raise NotImplementedError('axis {} is not currently supported'.format(axis))
     if flags.shape[axis] % chanav != 0:

@@ -4,6 +4,11 @@ import unittest
 import time
 
 import numpy as np
+# XXX Remove check when we move to NumPy 1.25+ in dockerbase
+if np.lib.NumpyVersion(np.__version__) >= '1.25.0':
+    from numpy.exceptions import AxisError
+else:
+    from numpy import AxisError
 
 from katsdpcalproc import calprocs
 
@@ -347,9 +352,9 @@ class TestWavgFlagsF(unittest.TestCase):
     def test_bad_axis(self):
         flags = np.zeros((6, 6), np.uint8)
         excise = np.zeros((6, 6), np.uint8)
-        with self.assertRaises(np.AxisError):
+        with self.assertRaises(AxisError):
             calprocs.wavg_flags_f(flags, 2, excise, axis=2)
-        with self.assertRaises(np.AxisError):
+        with self.assertRaises(AxisError):
             calprocs.wavg_flags_f(flags, 2, excise, axis=-3)
 
     def test_unsupported_axis(self):
