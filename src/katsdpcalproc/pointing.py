@@ -218,22 +218,22 @@ class BeamPatternFit:
 
 
 def _voltage_beamwidths(beamwidth_factor, frequency, dish_diameter):
-    """Helper function to calculate expected width
+    """The expected width of the voltage / gain beam at the given frequency.
+
     Parameters
     ----------
-
     beamwidth_factor : float
-        Power beamwidth of antenna
+        Power beamwidth of antenna is beamwidth_factor * lambda / D radians
     frequency : float
-        Frequency at which to calculate volatge beamwidth
+        Frequency at which to calculate voltage beamwidth, in Hz
     dish_diameter : float
-        Diameter of antenna dish
+        Diameter of antenna dish, in metres
+
     Returns
     -------
     expected_width : sequence of 2 floats, or float
         Initial guess of single beamwidth for both dimensions, or 2-element
         beamwidth vector, expressed as FWHM in units of target coordinates
-
     """
     expected_width = rad2deg(beamwidth_factor * lightspeed
                              / frequency / dish_diameter)
@@ -250,7 +250,6 @@ def beam_fit(data_points, ants, num_chunks=16, beam_center=(0.0, 0.0)):
 
     Parameters
     ----------
-
     data_points : dict mapping receptor index to (x, y, freq, gain, weight) seq
         Complex gains per receptor, as multiple records per offset and
         frequency chunk
@@ -259,13 +258,13 @@ def beam_fit(data_points, ants, num_chunks=16, beam_center=(0.0, 0.0)):
     num_chunks : int, optional
         Group the frequency channels into this many sections to obtain
         pointing fits
-   beam_center : sequence of 2 floats, optional
+    beam_center : sequence of 2 floats, optional
         Initial guess of 2-element beam center, in target coordinate units
+
     Returns
     -------
     beams : dict mapping receptor name to list of :class:`BeamPatternFit`
         Fitted primary beams, per receptor and per frequency chunk
-
     """
     beams = {}
     # Iterate over receptors
