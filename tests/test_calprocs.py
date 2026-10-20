@@ -14,6 +14,10 @@ def unit(value):
     return value / np.abs(value)
 
 
+def _wrap_angle(th):
+    return (th + np.pi) % (2.0 * np.pi) - np.pi
+
+
 class TestCalprocs(unittest.TestCase):
     def test_solint_from_nominal(self):
         # requested interval shorter than dump
@@ -871,3 +875,78 @@ class TestBestRefAnt(unittest.TestCase):
         self.vis[:, 0, noisy_mask] *= np.exp(1.j * extra_noise)
         candidate_ants = calprocs.best_refant(self.vis, self.bls, self.freqs)
         assert 2 not in candidate_ants
+
+
+class TestDelaySolvers:
+    """Tests for secant-based delay solver in katsdpcal.calprocs."""
+
+    def test_k_fit_secant_recovers_delays(
+            self, make_ant_delay_data, cramer_rao_bound, observation_params, ant_delays, random):
+        "Test that the k_fit_secant solver recovers known per-antenna delays."
+        chans, corrprod_lookup, data, weights, snr, delay_alias = make_ant_delay_data(
+            ant_delays, observation_params["sample_rate"], observation_params["dump_period"],
+            observation_params["flux"], n_pols=2, n_chans=observation_params["N_CHANS"],
+            sefd=observation_params["sefd"], random=random)
+        kdelay = calprocs.k_fit_secant(data, weights, corrprod_lookup, chans)
+        slopes = -2.0 * np.pi * ant_delays / delay_alias
+        slope_estimates = -2.0 * np.pi * kdelay / delay_alias
+        residuals = _wrap_angle(slope_estimates - slopes) * delay_alias / (2 * np.pi)
+        pcent25 = np.nanpercentile(residuals, 25, axis=-1)
+        pcent75 = np.nanpercentile(residuals, 75, axis=-1)
+        iqr_to_std = 0.741301109253  # conversion factor from IQR to std for a normal distribution
+        delay_std = (pcent75 - pcent25) * iqr_to_std
+        crb = cramer_rao_bound(snr=snr, n_chans=observation_params["N_CHANS"],
+                               n_ants=len(ant_delays))
+        crb_tol = crb * delay_alias / (2 * np.pi)
+        assert np.all(delay_std <= 5.0 * crb_tol)
+
+    def test_k_fit_secant_on_flagged_channels(
+            self, make_ant_delay_data, cramer_rao_bound, observation_params, ant_delays, random):
+        """Flagged channels should not break secant delay recovery."""
+        n_chans = observation_params["N_CHANS"]
+        chans, corrprod_lookup, data, weights, snr, delay_alias = make_ant_delay_data(
+            ant_delays, observation_params["sample_rate"], observation_params["dump_period"],
+            observation_params["flux"], n_pols=2, n_chans=n_chans,
+            sefd=observation_params["sefd"], random=random)
+
+        # Simulate 'aggressive' RFI flagging: mask a contiguous 50% of channels, maybe more?
+        # What is a good fraction to test for narrowband RFI excision?
+        channel_mask = np.ones(n_chans, dtype=np.float32)
+        channel_mask[200:1000] = np.nan
+        bandwidth = observation_params["sample_rate"] / 2
+        channel_width = bandwidth / n_chans
+        delay_alias = 1 / channel_width
+        samples = observation_params["dump_period"] / delay_alias
+
+        noise_var = 2 * observation_params["sefd"] * observation_params["sefd"] / samples
+        noise = (random.randn(*data.shape) + 1j * random.randn(*data.shape))
+        noisy_data = data + noise.astype(np.complex64) * np.sqrt(noise_var / 2.0)
+        # In flagged channels both weights and visibilities are zeroed in the pipeline.
+        weights = weights * channel_mask[:, np.newaxis, np.newaxis]
+        noisy_data = noisy_data * channel_mask[:, np.newaxis, np.newaxis]
+
+        kdelay = calprocs.k_fit_secant(noisy_data, weights, corrprod_lookup, chans)
+        slopes = -2.0 * np.pi * ant_delays / delay_alias
+        slope_estimates = -2.0 * np.pi * kdelay / delay_alias
+        residuals = _wrap_angle(slope_estimates - slopes) * delay_alias / (2 * np.pi)
+        pcent25 = np.nanpercentile(residuals, 25, axis=-1)
+        pcent75 = np.nanpercentile(residuals, 75, axis=-1)
+        iqr_to_std = 0.741301109253
+        delay_std = (pcent75 - pcent25) * iqr_to_std
+
+        crb = cramer_rao_bound(snr=snr, n_chans=n_chans, n_ants=len(ant_delays))
+        crb_tol = crb * delay_alias / (2 * np.pi)
+        # Flagged channels lower the effective SNR beyond what n_chans alone captures,
+        # so allow a larger margin above the CRB here than in the unflagged case for the tolerance.
+        assert np.all(delay_std <= 15 * crb_tol)
+
+    def test_k_fit_recovers_delays(
+            self, make_ant_delay_data, observation_params, ant_delays, random):
+        "Test that the k_fit solver recovers known per-antenna delays."
+        freqs, corrprod_lookup, data, weights, snr, delay_alias = make_ant_delay_data(
+            ant_delays, observation_params["sample_rate"], observation_params["dump_period"],
+            observation_params["flux"], n_pols=2, n_chans=observation_params["N_CHANS"],
+            sefd=observation_params["sefd"], random=random)
+        k_fit_delay = calprocs.k_fit(data, weights, corrprod_lookup, freqs)
+        np.testing.assert_allclose(k_fit_delay[0], ant_delays, atol=3e-11)
+        np.testing.assert_allclose(k_fit_delay[1], ant_delays, atol=3e-11)

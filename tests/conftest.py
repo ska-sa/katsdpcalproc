@@ -19,6 +19,8 @@
 import pytest
 from numpy.random import RandomState
 
+pytest_plugins = ["make_data_fixture"]
+
 
 @pytest.fixture(name="random")
 def fixture_random():
